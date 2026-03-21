@@ -14,7 +14,7 @@ Ernest currently echoes user messages back as a placeholder. To be useful as an 
 
 ## Proposed Solution
 
-Implement the provider interface, Anthropic provider, and router as specified in SPEC.md. Build a simplified agent loop that sends user prompts through the router and streams text responses back to the TUI. The agent loop in this plan handles text responses only — tool use is Phase 2. Modify the TUI's app model to accept an agent, dispatch prompts to it, and render streamed text deltas incrementally. Render assistant responses as markdown via Glamour.
+Implement the provider interface, Anthropic provider, and router as specified in the project spec. Build a simplified agent loop that sends user prompts through the router and streams text responses back to the TUI. The agent loop in this plan handles text responses only — tool use is Phase 2. Modify the TUI's app model to accept an agent, dispatch prompts to it, and render streamed text deltas incrementally. Render assistant responses as markdown via Glamour.
 
 ---
 
@@ -34,7 +34,7 @@ type Provider interface              // Name(), Stream(), Healthy()
 type ToolDef struct                  // name, description, input_schema
 ```
 
-All types match SPEC.md exactly.
+All types match the project spec exactly. (The spec is maintained locally as `SPEC.md` at the repo root but is gitignored — it is a private reference document, not checked into version control.)
 
 ### Agent Event (`internal/agent/loop.go`)
 
@@ -73,7 +73,7 @@ type StreamDoneMsg struct{}                            // signals streaming comp
 | 5 | User submits multiple messages in sequence | Conversation | Full conversation history sent to API each turn. Context builds naturally. |
 | 6 | Project has `.claude/CLAUDE.md` | Launch ernest in project dir | CLAUDE.md content sent as system prompt to Anthropic API |
 | 7 | Assistant response contains markdown | Code blocks, bold, lists | Rendered with syntax highlighting via Glamour |
-| 8 | No `.claude/` directory and no CLAUDE.md | Launch ernest in empty dir | System prompt is empty string. Anthropic API call omits the `system` field (or sends empty). Model responds normally without custom instructions. |
+| 8 | No project `.claude/` directory, no repo-root CLAUDE.md, and no user-global `~/.claude/` config | Launch ernest in empty dir with no user-global claude config | System prompt is empty string. Anthropic API call omits the `system` field (or sends empty). Model responds normally without custom instructions. |
 
 ---
 
@@ -101,7 +101,7 @@ func NewAnthropic(apiKey, model string) *Anthropic
 - Parse SSE response line-by-line using `bufio.Scanner` (call `Scanner.Buffer()` to increase from the default 64KB limit to 1MB, since future tool_use input JSON could exceed 64KB):
 
   - Lines starting with `event:` set the current event type
-  - Lines starting with `data:` contain JSON payload
+  - Lines starting with `data:` buffer the payload. Per the SSE spec, an event can have multiple `data:` lines — buffer all `data:` lines and join them (with newlines) on the blank-line event terminator, then JSON-decode the joined payload once per event.
   - Handle event types:
     - `message_start` — extract usage from message object
     - `content_block_start` — if type is `text`, begin text accumulation; if `tool_use`, emit `tool_use_start` (future-proofing)
@@ -165,7 +165,7 @@ Reads from the provider's stream channel and builds the complete `Message` for h
 
 Modify `AppModel`:
 - Add `agent *agent.Agent`, `streaming bool`, and `cancelStream context.CancelFunc` fields
-- Change `NewAppModel` to accept `*agent.Agent`
+- Change `NewAppModel` signature: keep `cfg config.Config` and `claudeCfg *config.ClaudeConfig` parameters (needed for status bar initialization), and add `agent *agent.Agent`. The agent is constructed externally in `main.go` and passed in alongside the existing config values.
 
 **Context lifecycle:**
 - On `SubmitMsg`: create `ctx, cancel := context.WithCancel(context.Background())`. Store `cancel` in `m.cancelStream`. Pass `ctx` to `agent.Run()`.
