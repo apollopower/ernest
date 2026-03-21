@@ -221,17 +221,21 @@ func (a *Anthropic) handleSSEEvent(eventType, data string, ch chan<- StreamEvent
 		}
 
 	case "content_block_stop":
-		// Nothing to do for now — content blocks are finalized via deltas
+		ch <- StreamEvent{Type: "content_block_stop"}
 
 	case "message_delta":
 		var delta struct {
+			Delta struct {
+				StopReason string `json:"stop_reason"`
+			} `json:"delta"`
 			Usage struct {
 				OutputTokens int `json:"output_tokens"`
 			} `json:"usage"`
 		}
 		if json.Unmarshal([]byte(data), &delta) == nil {
 			ch <- StreamEvent{
-				Type: "message_delta",
+				Type:       "message_delta",
+				StopReason: delta.Delta.StopReason,
 				Usage: &Usage{
 					OutputTokens: delta.Usage.OutputTokens,
 				},

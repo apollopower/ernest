@@ -4,6 +4,7 @@ import (
 	"ernest/internal/agent"
 	"ernest/internal/config"
 	"ernest/internal/provider"
+	"ernest/internal/tools"
 	"ernest/internal/tui"
 	"fmt"
 	"log"
@@ -57,9 +58,17 @@ func main() {
 		defer logFile.Close()
 	}
 
+	// Register read-only tools only. Write tools (write_file, str_replace, bash)
+	// are deferred to Phase 3 when the confirmation dialog gates them.
+	registry := tools.NewRegistry(
+		&tools.ReadFileTool{},
+		&tools.GlobTool{},
+		&tools.GrepTool{},
+	)
+
 	cooldown := time.Duration(cfg.CooldownSeconds) * time.Second
 	router := provider.NewRouter(providers, cooldown)
-	a := agent.New(router, claudeCfg)
+	a := agent.New(router, registry, claudeCfg)
 
 	app := tui.NewAppModel(cfg, claudeCfg, a)
 	p := tea.NewProgram(app, tea.WithAltScreen())

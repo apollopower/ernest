@@ -508,17 +508,17 @@ This plan does **NOT** include:
 - [x] Verify: `go build`, `go vet`, `go test` all pass
 
 ### Phase 2: Agent Loop Upgrade
-- [ ] Update `anthropic.go`: emit `content_block_stop` event, extract `stop_reason` from `message_delta`
-- [ ] Update `StreamEvent` type documentation in `provider.go`
-- [ ] Extend `consumeStream` to accumulate tool_use content blocks (unmarshal JSON into `map[string]any`)
-- [ ] Implement `extractToolCalls()` helper and `toolCall` struct
-- [ ] Implement tool call → execute → resume loop in `Run()` with max loop guard
-- [ ] Add `ToolName`, `ToolInput`, `ToolResult`, `ToolUseID` fields to `AgentEvent`
-- [ ] Update `agent.New()` to accept `*tools.Registry`
-- [ ] Register only read-only tools (read_file, glob, grep) in `cmd/ernest/main.go`
-- [ ] Update TUI to display tool call/result events in chat
-- [ ] Write agent loop tests for tool use scenarios
-- [ ] Verify: end-to-end tool use with real Anthropic API
+- [x] Update `anthropic.go`: emit `content_block_stop` event, extract `stop_reason` from `message_delta`
+- [x] Update `StreamEvent` type documentation in `provider.go`
+- [x] Extend `consumeStream` to accumulate tool_use content blocks (unmarshal JSON into `map[string]any`)
+- [x] Implement `extractToolCalls()` helper and `toolCall` struct
+- [x] Implement tool call → execute → resume loop in `Run()` with max loop guard
+- [x] Add `ToolName`, `ToolInput`, `ToolResult`, `ToolUseID` fields to `AgentEvent`
+- [x] Update `agent.New()` to accept `*tools.Registry`
+- [x] Register only read-only tools (read_file, glob, grep) in `cmd/ernest/main.go`
+- [x] Update TUI to display tool call/result events in chat
+- [x] Write agent loop tests for tool use scenarios
+- [x] Verify: end-to-end tool use with real Anthropic API
 
 ### Phase 3: Confirmation Dialog and Permissions
 - [ ] Implement `internal/agent/permissions.go` — PermissionChecker

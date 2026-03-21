@@ -10,9 +10,10 @@ import (
 )
 
 type ChatMessage struct {
-	Role      string // "user" or "assistant"
+	Role      string // "user", "assistant", "tool_call", "tool_result"
 	Content   string
-	streaming bool // true while message is being streamed
+	ToolName  string // for tool_call and tool_result messages
+	streaming bool   // true while message is being streamed
 }
 
 // dotTickMsg drives the animated "..." indicator while waiting for a response.
@@ -106,6 +107,56 @@ func (m *ChatModel) FinalizeMessage() {
 	m.viewport.GotoBottom()
 }
 
+// FinalizeOrRemoveEmpty finalizes the last message if it has content,
+// or removes it if it's an empty streaming placeholder. This prevents
+// blank lines between consecutive tool calls.
+func (m *ChatModel) FinalizeOrRemoveEmpty() {
+	if len(m.messages) == 0 {
+		return
+	}
+	last := m.messages[len(m.messages)-1]
+	if last.streaming && last.Content == "" {
+		m.messages = m.messages[:len(m.messages)-1]
+	} else {
+		m.messages[len(m.messages)-1].streaming = false
+	}
+	m.renderMessages()
+	m.viewport.GotoBottom()
+}
+
+// AddToolCall adds a tool call message to the chat.
+func (m *ChatModel) AddToolCall(toolName, toolInput string) {
+	// Truncate long tool input for display
+	display := toolInput
+	if len(display) > 200 {
+		display = display[:200] + "..."
+	}
+	m.messages = append(m.messages, ChatMessage{
+		Role:     "tool_call",
+		ToolName: toolName,
+		Content:  display,
+	})
+	m.renderMessages()
+	m.viewport.GotoBottom()
+}
+
+// AddToolResult adds a tool result message to the chat.
+func (m *ChatModel) AddToolResult(toolName, toolResult string) {
+	// Truncate long results for display
+	lines := strings.Split(toolResult, "\n")
+	display := toolResult
+	if len(lines) > 50 {
+		display = strings.Join(lines[:50], "\n") + "\n... (truncated)"
+	}
+	m.messages = append(m.messages, ChatMessage{
+		Role:     "tool_result",
+		ToolName: toolName,
+		Content:  display,
+	})
+	m.renderMessages()
+	m.viewport.GotoBottom()
+}
+
 func (m *ChatModel) SetSize(width, height int) {
 	m.width = width
 	m.height = height
@@ -161,6 +212,14 @@ func (m *ChatModel) renderMessages() {
 			label := assistantLabelStyle.Render("E")
 			content := m.renderAssistantContent(msg)
 			lines = append(lines, label+" "+content)
+		case "tool_call":
+			label := toolLabelStyle.Render("[" + msg.ToolName + "]")
+			content := toolContentStyle.Render(msg.Content)
+			lines = append(lines, label+" "+content)
+		case "tool_result":
+			label := toolLabelStyle.Render("[" + msg.ToolName + " result]")
+			content := toolContentStyle.Render(msg.Content)
+			lines = append(lines, label+"\n"+content)
 		}
 	}
 

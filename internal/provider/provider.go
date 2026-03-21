@@ -29,13 +29,14 @@ type ContentBlock struct {
 
 // StreamEvent is emitted during streaming responses.
 type StreamEvent struct {
-	Type      string // "text_delta", "tool_use_start", "tool_input_delta", "done", "error"
-	Text      string
-	ToolUseID string
-	ToolName  string
-	ToolInput string // accumulated JSON
-	Error     error
-	Usage     *Usage
+	Type       string // "text_delta", "tool_use_start", "tool_input_delta", "content_block_stop", "message_start", "message_delta", "done", "error"
+	Text       string
+	ToolUseID  string
+	ToolName   string
+	ToolInput  string // accumulated JSON
+	StopReason string // "end_turn", "tool_use", etc. — set on "message_delta" events, not "done"
+	Error      error
+	Usage      *Usage
 }
 
 // Usage tracks token consumption for a request.

@@ -173,6 +173,16 @@ func (m AppModel) handleAgentEvent(evt agent.AgentEvent) (tea.Model, tea.Cmd) {
 		}
 		return m, waitForAgentEvent(m.agentCh)
 
+	case "tool_call":
+		m.chat.FinalizeOrRemoveEmpty()
+		m.chat.AddToolCall(evt.ToolName, evt.ToolInput)
+		return m, waitForAgentEvent(m.agentCh)
+
+	case "tool_result":
+		m.chat.AddToolResult(evt.ToolName, evt.ToolResult)
+		dotCmd := m.chat.StartStreamingMessage()
+		return m, tea.Batch(dotCmd, waitForAgentEvent(m.agentCh))
+
 	case "error":
 		errText := "Error"
 		if evt.Error != nil {
