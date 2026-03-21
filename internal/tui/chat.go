@@ -1,8 +1,8 @@
 package tui
 
 import (
-	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -15,10 +15,14 @@ type ChatMessage struct {
 	streaming bool // true while message is being streamed
 }
 
+// dotTickMsg drives the animated "..." indicator while waiting for a response.
+type dotTickMsg struct{}
+
 type ChatModel struct {
 	viewport viewport.Model
 	messages []ChatMessage
 	renderer *glamour.TermRenderer
+	dotCount int // 0-2, produces 1-3 dots for animated indicator
 	width    int
 	height   int
 	ready    bool
@@ -43,11 +47,25 @@ func (m ChatModel) Update(msg tea.Msg) (ChatModel, tea.Cmd) {
 	var cmd tea.Cmd
 
 	switch msg.(type) {
+	case dotTickMsg:
+		if m.isStreaming() && m.lastMessageEmpty() {
+			m.dotCount = (m.dotCount + 1) % 3
+			m.renderMessages()
+			return m, m.tickDots()
+		}
+		return m, nil
 	default:
 		m.viewport, cmd = m.viewport.Update(msg)
 	}
 
 	return m, cmd
+}
+
+// tickDots returns a command that sends a dotTickMsg after a short delay.
+func (m ChatModel) tickDots() tea.Cmd {
+	return tea.Tick(400*time.Millisecond, func(time.Time) tea.Msg {
+		return dotTickMsg{}
+	})
 }
 
 func (m *ChatModel) AddMessage(role, content string) {
@@ -57,10 +75,13 @@ func (m *ChatModel) AddMessage(role, content string) {
 }
 
 // StartStreamingMessage adds an empty assistant message and marks it as streaming.
-func (m *ChatModel) StartStreamingMessage() {
+// Returns a tea.Cmd that starts the dot animation.
+func (m *ChatModel) StartStreamingMessage() tea.Cmd {
+	m.dotCount = 0
 	m.messages = append(m.messages, ChatMessage{Role: "assistant", streaming: true})
 	m.renderMessages()
 	m.viewport.GotoBottom()
+	return m.tickDots()
 }
 
 // AppendToMessage appends text to the last message (used during streaming).
@@ -133,13 +154,13 @@ func (m *ChatModel) renderMessages() {
 
 		switch msg.Role {
 		case "user":
-			label := userLabelStyle.Render("You")
+			label := userLabelStyle.Render(">")
 			content := userMsgStyle.Render(msg.Content)
-			lines = append(lines, fmt.Sprintf("%s  %s", label, content))
+			lines = append(lines, label+" "+content)
 		case "assistant":
-			label := assistantLabelStyle.Render("Ernest")
+			label := assistantLabelStyle.Render("E")
 			content := m.renderAssistantContent(msg)
-			lines = append(lines, fmt.Sprintf("%s\n%s", label, content))
+			lines = append(lines, label+" "+content)
 		}
 	}
 
@@ -150,7 +171,8 @@ func (m *ChatModel) renderMessages() {
 // rendered as plain text; finalized messages go through Glamour for markdown.
 func (m *ChatModel) renderAssistantContent(msg ChatMessage) string {
 	if msg.Content == "" {
-		return assistantMsgStyle.Render("...")
+		dots := strings.Repeat(".", m.dotCount+1)
+		return assistantMsgStyle.Render(dots)
 	}
 
 	if msg.streaming || m.renderer == nil {
@@ -161,7 +183,23 @@ func (m *ChatModel) renderAssistantContent(msg ChatMessage) string {
 	if err != nil {
 		return assistantMsgStyle.Render(msg.Content)
 	}
-	return strings.TrimRight(rendered, "\n")
+	return strings.TrimSpace(rendered)
+}
+
+// isStreaming returns true if the last message is currently streaming.
+func (m *ChatModel) isStreaming() bool {
+	if len(m.messages) == 0 {
+		return false
+	}
+	return m.messages[len(m.messages)-1].streaming
+}
+
+// lastMessageEmpty returns true if the last message has no content yet.
+func (m *ChatModel) lastMessageEmpty() bool {
+	if len(m.messages) == 0 {
+		return false
+	}
+	return m.messages[len(m.messages)-1].Content == ""
 }
 
 func (m ChatModel) View() string {

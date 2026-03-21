@@ -35,8 +35,8 @@ func TestBuildRequestBody_BasicMessage(t *testing.T) {
 	if req.Model != "claude-opus-4-6" {
 		t.Errorf("expected model 'claude-opus-4-6', got %q", req.Model)
 	}
-	if req.MaxTokens != 8192 {
-		t.Errorf("expected max_tokens 8192, got %d", req.MaxTokens)
+	if req.MaxTokens != 16384 {
+		t.Errorf("expected max_tokens 16384, got %d", req.MaxTokens)
 	}
 	if !req.Stream {
 		t.Error("expected stream to be true")

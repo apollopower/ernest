@@ -86,12 +86,17 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.cancelStream = cancel
 		m.streaming = true
 		m.agentCh = m.agent.Run(ctx, msg.Text)
-		m.chat.StartStreamingMessage()
+		dotCmd := m.chat.StartStreamingMessage()
 
-		return m, waitForAgentEvent(m.agentCh)
+		return m, tea.Batch(waitForAgentEvent(m.agentCh), dotCmd)
 
 	case AgentEventMsg:
 		return m.handleAgentEvent(msg.Event)
+
+	case dotTickMsg:
+		var cmd tea.Cmd
+		m.chat, cmd = m.chat.Update(msg)
+		return m, cmd
 
 	case StreamDoneMsg:
 		m.chat.FinalizeMessage()

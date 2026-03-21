@@ -10,7 +10,7 @@ import (
 
 // AgentEvent is what the TUI receives from the agent loop.
 type AgentEvent struct {
-	Type         string // "text", "provider_switch", "error", "done"
+	Type         string // "text", "usage", "provider_switch", "error", "done"
 	Text         string
 	ProviderName string
 	Error        error

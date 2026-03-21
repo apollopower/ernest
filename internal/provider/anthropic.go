@@ -63,7 +63,7 @@ func (a *Anthropic) Stream(ctx context.Context, systemPrompt string, messages []
 
 	if resp.StatusCode != http.StatusOK {
 		defer resp.Body.Close()
-		bodyBytes, _ := io.ReadAll(resp.Body)
+		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return nil, fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(bodyBytes))
 	}
 
@@ -85,7 +85,7 @@ func (a *Anthropic) buildRequestBody(systemPrompt string, messages []Message, to
 
 	reqBody := anthropicRequest{
 		Model:     a.model,
-		MaxTokens: 8192,
+		MaxTokens: 16384,
 		Stream:    true,
 		Messages:  apiMessages,
 	}

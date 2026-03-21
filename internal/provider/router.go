@@ -37,24 +37,33 @@ func NewRouter(providers []Provider, cooldown time.Duration) *Router {
 func (r *Router) Stream(ctx context.Context, systemPrompt string,
 	messages []Message, tools []ToolDef) (<-chan StreamEvent, string, error) {
 
+	// Snapshot which providers to try (lock only for health cache access)
 	r.mu.Lock()
-	defer r.mu.Unlock()
-
+	var candidates []Provider
 	for _, p := range r.providers {
 		entry := r.healthCache[p.Name()]
 		if !entry.healthy && entry.failures > 0 && time.Since(entry.lastCheck) < r.cooldown {
 			log.Printf("[router] skipping %s (cooldown, %d failures)", p.Name(), entry.failures)
 			continue
 		}
+		candidates = append(candidates, p)
+	}
+	r.mu.Unlock()
 
+	// Try candidates without holding the lock (network I/O)
+	for _, p := range candidates {
 		ch, err := p.Stream(ctx, systemPrompt, messages, tools)
 		if err != nil {
 			log.Printf("[router] %s failed: %v, trying next", p.Name(), err)
+			r.mu.Lock()
 			r.markUnhealthy(p.Name())
+			r.mu.Unlock()
 			continue
 		}
 
+		r.mu.Lock()
 		r.markHealthy(p.Name())
+		r.mu.Unlock()
 		return ch, p.Name(), nil
 	}
 
