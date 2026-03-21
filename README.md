@@ -66,7 +66,7 @@ Ernest's design decisions are guided by a ranked set of values. When two conflic
 2. **Performance** — instant startup, streaming-first, single binary
 3. **Terseness** — every line of code earns its place
 4. **Correctness** — the tool does what it says it does
-5. **Portability** — runs on Linux and macOS without runtime dependencies
+5. **Portability** — runs on Linux, macOS, and Windows without runtime dependencies
 6. **Minimalism** — build what's needed, nothing more
 
 ## License

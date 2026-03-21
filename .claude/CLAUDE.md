@@ -12,7 +12,7 @@ Ernest's values are ranked. When two values conflict, the higher-ranked value wi
 
 4. **Correctness** — The tool does what it says it does. Tool executions are faithful. Conversation history is accurate. Token counts are real. When something fails, say so clearly — never silently swallow errors or fabricate results.
 
-5. **Portability** — Single binary, runs on Linux and macOS without runtime dependencies. Cross-compilation is a first-class build target. Avoid platform-specific code unless behind a build tag.
+5. **Portability** — Single binary, runs on Linux, macOS, and Windows without runtime dependencies. Cross-compilation is a first-class build target. Avoid platform-specific code unless behind a build tag.
 
 6. **Minimalism** — Build what's needed, nothing more. No plugin marketplaces, no config UIs, no extension points for hypothetical futures. Real capabilities (like MCP servers) are welcome when they serve a concrete need. The line is: don't build indirection layers or abstractions until a specific use case forces them.
 
