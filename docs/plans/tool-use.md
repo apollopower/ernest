@@ -486,6 +486,7 @@ Each phase produces a working, testable state:
 This plan does **NOT** include:
 - Context compaction (separate plan)
 - MCP server support (separate plan)
+- Windows compatibility for the `bash` tool — uses `sh -c` which requires a POSIX shell. A dedicated Windows portability plan will bridge this gap (e.g., `cmd /C` or PowerShell via build tags).
 - Image input / base64 encoding
 - Cost tracking
 - Session persistence
