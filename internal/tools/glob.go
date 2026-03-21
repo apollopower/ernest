@@ -61,6 +61,14 @@ func (t *GlobTool) Execute(_ context.Context, input json.RawMessage) (string, er
 		}
 	}
 
+	info, err := os.Stat(root)
+	if err != nil {
+		return "", fmt.Errorf("cannot access path %q: %w", root, err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("path %q is not a directory", root)
+	}
+
 	fsys := os.DirFS(root)
 	matches, err := doublestar.Glob(fsys, params.Pattern)
 	if err != nil {

@@ -24,7 +24,7 @@ func (t *WriteFileTool) InputSchema() map[string]any {
 		"properties": map[string]any{
 			"file_path": map[string]any{
 				"type":        "string",
-				"description": "Absolute path to write to",
+				"description": "Path to the file to write",
 			},
 			"content": map[string]any{
 				"type":        "string",

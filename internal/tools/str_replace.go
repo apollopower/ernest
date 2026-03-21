@@ -26,7 +26,7 @@ func (t *StrReplaceTool) InputSchema() map[string]any {
 		"properties": map[string]any{
 			"file_path": map[string]any{
 				"type":        "string",
-				"description": "Absolute path to the file",
+				"description": "Path to the file",
 			},
 			"old_string": map[string]any{
 				"type":        "string",

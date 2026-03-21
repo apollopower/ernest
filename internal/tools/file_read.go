@@ -28,7 +28,7 @@ func (t *ReadFileTool) InputSchema() map[string]any {
 		"properties": map[string]any{
 			"file_path": map[string]any{
 				"type":        "string",
-				"description": "Absolute path to the file to read",
+				"description": "Path to the file to read",
 			},
 			"offset": map[string]any{
 				"type":        "integer",
@@ -103,7 +103,10 @@ func (t *ReadFileTool) Execute(_ context.Context, input json.RawMessage) (string
 	}
 
 	if len(lines) == 0 {
-		return "(empty file)", nil
+		if info.Size() == 0 {
+			return "(empty file)", nil
+		}
+		return fmt.Sprintf("(no lines in range: offset %d, limit %d, file has %d lines)", offset, limit, lineNum), nil
 	}
 
 	return strings.Join(lines, "\n"), nil

@@ -62,7 +62,7 @@ func (t *BashTool) Execute(ctx context.Context, input json.RawMessage) (string, 
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "sh", "-c", params.Command)
+	cmd := exec.CommandContext(ctx, "bash", "-c", params.Command)
 	output, err := cmd.CombinedOutput()
 
 	// Truncate output if too large, avoiding splitting multi-byte UTF-8 characters

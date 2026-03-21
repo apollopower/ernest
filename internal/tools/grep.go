@@ -106,7 +106,10 @@ func (t *GrepTool) Execute(ctx context.Context, input json.RawMessage) (string, 
 
 			// Apply include filter
 			if params.Include != "" {
-				matched, _ := filepath.Match(params.Include, d.Name())
+				matched, err := filepath.Match(params.Include, d.Name())
+				if err != nil {
+					return fmt.Errorf("invalid include pattern %q: %w", params.Include, err)
+				}
 				if !matched {
 					return nil
 				}
@@ -129,10 +132,9 @@ func (t *GrepTool) Execute(ctx context.Context, input json.RawMessage) (string, 
 		return "(no matches)", nil
 	}
 
-	truncated := false
-	if len(matches) > maxGrepMatches {
+	truncated := len(matches) >= maxGrepMatches
+	if truncated {
 		matches = matches[:maxGrepMatches]
-		truncated = true
 	}
 
 	result := strings.Join(matches, "\n")
