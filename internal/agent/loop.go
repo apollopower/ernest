@@ -97,6 +97,12 @@ func (a *Agent) Run(ctx context.Context, userPrompt string) <-chan AgentEvent {
 			a.history = append(a.history, response)
 			a.mu.Unlock()
 
+			// Stop immediately if context was cancelled (e.g., Ctrl+C)
+			if ctx.Err() != nil {
+				events <- AgentEvent{Type: "done"}
+				return
+			}
+
 			// Extract tool calls from the response
 			calls := extractToolCalls(response)
 

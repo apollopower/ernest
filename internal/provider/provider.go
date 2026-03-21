@@ -34,7 +34,7 @@ type StreamEvent struct {
 	ToolUseID  string
 	ToolName   string
 	ToolInput  string // accumulated JSON
-	StopReason string // "end_turn", "tool_use", etc. — set on "done" events
+	StopReason string // "end_turn", "tool_use", etc. — set on "message_delta" events, not "done"
 	Error      error
 	Usage      *Usage
 }

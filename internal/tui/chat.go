@@ -107,6 +107,23 @@ func (m *ChatModel) FinalizeMessage() {
 	m.viewport.GotoBottom()
 }
 
+// FinalizeOrRemoveEmpty finalizes the last message if it has content,
+// or removes it if it's an empty streaming placeholder. This prevents
+// blank lines between consecutive tool calls.
+func (m *ChatModel) FinalizeOrRemoveEmpty() {
+	if len(m.messages) == 0 {
+		return
+	}
+	last := m.messages[len(m.messages)-1]
+	if last.streaming && last.Content == "" {
+		m.messages = m.messages[:len(m.messages)-1]
+	} else {
+		m.messages[len(m.messages)-1].streaming = false
+	}
+	m.renderMessages()
+	m.viewport.GotoBottom()
+}
+
 // AddToolCall adds a tool call message to the chat.
 func (m *ChatModel) AddToolCall(toolName, toolInput string) {
 	// Truncate long tool input for display

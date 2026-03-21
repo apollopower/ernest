@@ -174,7 +174,7 @@ func (m AppModel) handleAgentEvent(evt agent.AgentEvent) (tea.Model, tea.Cmd) {
 		return m, waitForAgentEvent(m.agentCh)
 
 	case "tool_call":
-		m.chat.FinalizeMessage()
+		m.chat.FinalizeOrRemoveEmpty()
 		m.chat.AddToolCall(evt.ToolName, evt.ToolInput)
 		return m, waitForAgentEvent(m.agentCh)
 
