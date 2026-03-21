@@ -17,8 +17,8 @@ func TestDefaultConfig(t *testing.T) {
 	if p.Name != "anthropic" {
 		t.Errorf("expected default provider 'anthropic', got %q", p.Name)
 	}
-	if p.Model != "claude-opus-4-6-20250610" {
-		t.Errorf("expected default model 'claude-opus-4-6-20250610', got %q", p.Model)
+	if p.Model != "claude-opus-4-6" {
+		t.Errorf("expected default model 'claude-opus-4-6', got %q", p.Model)
 	}
 	if p.APIKeyEnv != "ANTHROPIC_API_KEY" {
 		t.Errorf("expected default api_key_env 'ANTHROPIC_API_KEY', got %q", p.APIKeyEnv)

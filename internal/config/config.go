@@ -26,7 +26,7 @@ func DefaultConfig() Config {
 			{
 				Name:      "anthropic",
 				APIKeyEnv: "ANTHROPIC_API_KEY",
-				Model:     "claude-opus-4-6-20250610",
+				Model:     "claude-opus-4-6",
 				Priority:  1,
 			},
 		},

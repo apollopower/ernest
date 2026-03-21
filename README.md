@@ -32,7 +32,7 @@ Ernest reads its own config from `~/.config/ernest/config.yaml`:
 providers:
   - name: anthropic
     api_key_env: ANTHROPIC_API_KEY
-    model: claude-opus-4-6-20250610
+    model: claude-opus-4-6
     priority: 1
 
   - name: openai
@@ -44,7 +44,7 @@ cooldown_seconds: 30
 max_context_tokens: 180000
 ```
 
-If no config file exists, Ernest defaults to Anthropic with `claude-opus-4-6-20250610`.
+If no config file exists, Ernest defaults to Anthropic with `claude-opus-4-6`.
 
 ## Claude config
 
@@ -57,6 +57,17 @@ Ernest reads the same `.claude/` directory structure that Claude Code uses:
 - `CLAUDE.md` at repo root — legacy location
 
 All of these are assembled into the system prompt sent to whichever provider is active.
+
+## Values
+
+Ernest's design decisions are guided by a ranked set of values. When two conflict, the higher-ranked value wins.
+
+1. **Resilience** — work never stops, even when providers go down
+2. **Performance** — instant startup, streaming-first, single binary
+3. **Terseness** — every line of code earns its place
+4. **Correctness** — the tool does what it says it does
+5. **Portability** — runs on Linux, macOS, and Windows without runtime dependencies
+6. **Minimalism** — build what's needed, nothing more
 
 ## License
 
