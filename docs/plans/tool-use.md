@@ -16,11 +16,11 @@ Ernest can stream text responses from Claude but cannot take actions — it can'
 
 Implement in three phases, each producing a mergeable PR:
 
-**Phase 1** builds the tool interface, registry, and six core tools (`read_file`, `write_file`, `file_edit`, `bash`, `glob`, `grep`). These are pure Go implementations with no TUI coupling — each tool takes JSON input and returns a string result.
+**Phase 1** builds the tool interface, registry, and six core tools (`read_file`, `write_file`, `str_replace`, `bash`, `glob`, `grep`). These are pure Go implementations with no TUI coupling — each tool takes JSON input and returns a string result.
 
 **Phase 2** upgrades the agent loop to handle tool calls. The `consumeStream` helper is extended to accumulate `tool_use` content blocks. After streaming completes, the loop extracts tool calls, executes them, appends results to history, and re-enters the streaming loop until the model stops requesting tools. New `AgentEvent` types (`tool_call`, `tool_result`) are emitted for the TUI to display.
 
-**Phase 3** adds the TUI confirmation dialog and permission system. Tools that modify state (write_file, bash, file_edit) require user approval via a y/n dialog before execution. The permission checker reads `allowedTools` and `deniedTools` from `.claude/settings.json` to auto-approve or auto-deny tools without prompting.
+**Phase 3** adds the TUI confirmation dialog and permission system. Tools that modify state (write_file, bash, str_replace) require user approval via a y/n dialog before execution. The permission checker reads `allowedTools` and `deniedTools` from `.claude/settings.json` to auto-approve or auto-deny tools without prompting.
 
 ---
 
@@ -104,7 +104,7 @@ func (p *PermissionChecker) Check(toolName string) Permission // Allowed, Denied
 | 8 | Model calls unknown tool | Tool not in registry | Error result returned, model continues |
 | 9 | `bash` command times out | Long-running command | Context cancellation stops the command, partial output returned |
 | 10 | `read_file` on nonexistent path | Bad path | Error result returned to model, model handles gracefully |
-| 11 | `file_edit` with non-unique old_string | Ambiguous edit | Error result returned: "old_string is not unique in file" |
+| 11 | `str_replace` with non-unique old_string | Ambiguous edit | Error result returned: "old_string is not unique in file" |
 | 12 | `glob` pattern matches many files | Wide pattern | Results truncated to reasonable limit, model informed of truncation |
 | 13 | `grep` with regex pattern | Search | Matching lines returned with file paths and line numbers |
 
@@ -164,7 +164,7 @@ Implement as specified in the project spec:
 - Return confirmation message with file path and byte count
 - `RequiresConfirmation`: always true (modifies filesystem)
 
-#### Step 1.4: `file_edit` Tool (`internal/tools/file_edit.go`)
+#### Step 1.4: `str_replace` Tool (`internal/tools/str_replace.go`)
 
 **Input schema:**
 ```json
@@ -261,7 +261,7 @@ Implement as specified in the project spec:
 - `internal/tools/tools_test.go` — registry creation, Get, ToolDefs
 - `internal/tools/file_read_test.go` — read existing file, offset/limit, nonexistent file, directory error
 - `internal/tools/file_write_test.go` — write new file, overwrite, create parent dirs
-- `internal/tools/file_edit_test.go` — single replacement, replace_all, non-unique error, not-found error
+- `internal/tools/str_replace_test.go` — single replacement, replace_all, non-unique error, not-found error
 - `internal/tools/bash_test.go` — simple command, exit code, timeout
 - `internal/tools/glob_test.go` — pattern matching, truncation
 - `internal/tools/grep_test.go` — regex matching, include filter, binary skip
@@ -315,7 +315,7 @@ Iterates `msg.Content`, finds blocks where `Type == "tool_use"`, marshals `ToolI
   - Re-enter the streaming loop (call `router.Stream` again)
 - The loop continues until the model responds with no tool calls
 
-**Phase 2 safety: only register read-only tools.** To avoid a security window where all tools auto-execute without confirmation, Phase 2 registers only `read_file`, `glob`, and `grep`. The write tools (`write_file`, `file_edit`, `bash`) are deferred to Phase 3 when the confirmation dialog gates them. This eliminates the need for throwaway safety code.
+**Phase 2 safety: only register read-only tools.** To avoid a security window where all tools auto-execute without confirmation, Phase 2 registers only `read_file`, `glob`, and `grep`. The write tools (`write_file`, `str_replace`, `bash`) are deferred to Phase 3 when the confirmation dialog gates them. This eliminates the need for throwaway safety code.
 
 #### Step 2.3: Update Agent Constructor
 
@@ -373,10 +373,9 @@ func NewPermissionChecker(claudeCfg *config.ClaudeConfig) *PermissionChecker
 func (p *PermissionChecker) Check(toolName string) Permission
 ```
 
-- `allowedTools` entries support glob patterns (e.g., `"bash:*"` allows all bash commands)
-- For simplicity in Phase 1: match tool names exactly against the lists
-- If tool is in `allowedTools` → `PermissionAllowed`
-- If tool is in `deniedTools` → `PermissionDenied`
+- Tool names are matched exactly against the `allowedTools` and `deniedTools` lists
+- If the tool name is in `allowedTools` → `PermissionAllowed`
+- If the tool name is in `deniedTools` → `PermissionDenied`
 - Otherwise → `PermissionAsk`
 
 #### Step 3.2: Tool Confirmation Dialog (`internal/tui/tool_confirm.go`)
@@ -426,7 +425,7 @@ For tools where `RequiresConfirmation()` is false, or where the permission check
 
 For `PermissionDenied`, return error result immediately without asking.
 
-**Phase 3 also registers the write tools** (`write_file`, `file_edit`, `bash`) that were deferred from Phase 2. These tools are now safe to register because the confirmation dialog gates execution.
+**Phase 3 also registers the write tools** (`write_file`, `str_replace`, `bash`) that were deferred from Phase 2. These tools are now safe to register because the confirmation dialog gates execution.
 
 #### Step 3.4: Update AppModel for Confirmation State
 
@@ -473,7 +472,7 @@ Each phase produces a working, testable state:
 
 | Risk | Likelihood | Impact | Mitigation |
 |------|-----------|--------|------------|
-| `bash` tool security: model runs destructive commands | High | High | `RequiresConfirmation` always true for bash. Phase 2 only registers read-only tools (read_file, glob, grep). Write tools (write_file, file_edit, bash) are deferred to Phase 3 when the confirmation dialog gates them. |
+| `bash` tool security: model runs destructive commands | High | High | `RequiresConfirmation` always true for bash. Phase 2 only registers read-only tools (read_file, glob, grep). Write tools (write_file, str_replace, bash) are deferred to Phase 3 when the confirmation dialog gates them. |
 | `**` glob pattern requires third-party library | Medium | Low | Use `github.com/bmatcuk/doublestar/v4` — small, well-maintained, no transitive deps. Or implement a simple recursive walker if we want zero deps. |
 | Tool call JSON accumulation from partial deltas | Medium | Medium | Accumulate `input_json_delta` partials into a buffer string. Parse JSON only on `content_block_stop`, not during deltas. Test with multi-chunk tool inputs. |
 | Agent-TUI confirmation channel coordination | Medium | High | `confirmCh` is buffered(1) to prevent TUI deadlock. Agent reads with `select` on both `confirmCh` and `ctx.Done()` to prevent goroutine leaks on user quit. |
@@ -500,7 +499,7 @@ This plan does **NOT** include:
 - [ ] Implement `internal/tools/tools.go` — Tool interface and Registry
 - [ ] Implement `internal/tools/file_read.go` — read_file tool
 - [ ] Implement `internal/tools/file_write.go` — write_file tool
-- [ ] Implement `internal/tools/file_edit.go` — file_edit (str_replace) tool
+- [ ] Implement `internal/tools/str_replace.go` — str_replace (str_replace) tool
 - [ ] Implement `internal/tools/bash.go` — bash tool
 - [ ] Implement `internal/tools/glob.go` — glob tool
 - [ ] Implement `internal/tools/grep.go` — grep tool
@@ -525,7 +524,7 @@ This plan does **NOT** include:
 - [ ] Implement `internal/tui/tool_confirm.go` — confirmation dialog model
 - [ ] Add `confirmCh` (buffered size 1) coordination between agent loop and TUI
 - [ ] Wire confirmation into agent loop (check permissions, prompt if needed, `select` with `ctx.Done()`)
-- [ ] Register write tools (write_file, file_edit, bash) now that confirmation gates them
+- [ ] Register write tools (write_file, str_replace, bash) now that confirmation gates them
 - [ ] Update AppModel for confirmation state management
 - [ ] Add styles for confirmation dialog
 - [ ] Write permission checker tests
