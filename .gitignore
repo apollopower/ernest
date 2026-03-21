@@ -1,0 +1,29 @@
+# Build output
+dist/
+ernest
+
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Ernest config (local)
+*.local.yaml
+
+# Spec (internal reference only)
+SPEC.md
