@@ -56,8 +56,7 @@ New BubbleTea message types in `internal/tui/app.go`:
 
 ```go
 type AgentEventMsg struct{ Event agent.AgentEvent }  // wraps agent events for BubbleTea
-type StreamStartMsg struct{}                           // signals streaming began
-type StreamDoneMsg struct{}                            // signals streaming complete
+type StreamDoneMsg struct{}                            // signals agent event channel closed
 ```
 
 ---
@@ -212,7 +211,7 @@ Add methods for incremental message building:
 ### Step 7: Markdown Rendering (`internal/tui/chat.go`)
 
 Use Glamour to render assistant messages:
-- Create a Glamour renderer with `glamour.WithAutoStyle()` (adapts to terminal background)
+- Create a Glamour renderer with `glamour.WithStandardStyle("dark")` (avoids terminal background probing which can hang on some terminals)
 - Render assistant message content through Glamour on finalization
 - During streaming, render as plain text (avoid re-rendering markdown on every delta)
 

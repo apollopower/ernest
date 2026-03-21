@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sync"
 	"time"
 )
 
 // Router tries providers in priority order, falling back on failure.
 type Router struct {
 	providers   []Provider
+	mu          sync.Mutex
 	healthCache map[string]healthEntry
 	cooldown    time.Duration
 }
@@ -35,6 +37,9 @@ func NewRouter(providers []Provider, cooldown time.Duration) *Router {
 func (r *Router) Stream(ctx context.Context, systemPrompt string,
 	messages []Message, tools []ToolDef) (<-chan StreamEvent, string, error) {
 
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
 	for _, p := range r.providers {
 		entry := r.healthCache[p.Name()]
 		if !entry.healthy && entry.failures > 0 && time.Since(entry.lastCheck) < r.cooldown {
@@ -56,6 +61,7 @@ func (r *Router) Stream(ctx context.Context, systemPrompt string,
 	return nil, "", fmt.Errorf("all providers exhausted")
 }
 
+// markUnhealthy must be called with r.mu held.
 func (r *Router) markUnhealthy(name string) {
 	entry := r.healthCache[name]
 	entry.healthy = false
@@ -64,6 +70,7 @@ func (r *Router) markUnhealthy(name string) {
 	r.healthCache[name] = entry
 }
 
+// markHealthy must be called with r.mu held.
 func (r *Router) markHealthy(name string) {
 	r.healthCache[name] = healthEntry{healthy: true, lastCheck: time.Now()}
 }

@@ -74,6 +74,11 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.streaming {
 			return m, nil // ignore input while streaming
 		}
+		if m.agent == nil {
+			m.chat.AddMessage("user", msg.Text)
+			m.chat.AddMessage("assistant", "[error: no provider configured]")
+			return m, nil
+		}
 		m.chat.AddMessage("user", msg.Text)
 
 		// Create a fresh context for this streaming turn

@@ -22,6 +22,7 @@ type Anthropic struct {
 	apiKey string
 	model  string
 	client *http.Client
+	apiURL string // overridable for testing
 }
 
 func NewAnthropic(apiKey, model string) *Anthropic {
@@ -29,6 +30,7 @@ func NewAnthropic(apiKey, model string) *Anthropic {
 		apiKey: apiKey,
 		model:  model,
 		client: &http.Client{},
+		apiURL: anthropicAPIURL,
 	}
 }
 
@@ -45,7 +47,7 @@ func (a *Anthropic) Stream(ctx context.Context, systemPrompt string, messages []
 		return nil, fmt.Errorf("building request body: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", anthropicAPIURL, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, "POST", a.apiURL, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
@@ -136,6 +138,17 @@ func (a *Anthropic) parseSSE(ctx context.Context, body io.ReadCloser, ch chan<- 
 			dataLines = append(dataLines, strings.TrimPrefix(line, "data: "))
 		}
 		// Ignore comments (lines starting with :) and other fields
+	}
+
+	// Flush any pending event if the stream ended without a trailing blank line
+	if currentEvent != "" && len(dataLines) > 0 {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			data := strings.Join(dataLines, "\n")
+			a.handleSSEEvent(currentEvent, data, ch)
+		}
 	}
 
 	if err := scanner.Err(); err != nil {

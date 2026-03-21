@@ -99,9 +99,13 @@ func (m *ChatModel) SetSize(width, height int) {
 	}
 
 	// Recreate renderer with new width
+	wrapWidth := width - 4
+	if wrapWidth < 1 {
+		wrapWidth = 1
+	}
 	r, _ := glamour.NewTermRenderer(
 		glamour.WithStandardStyle("dark"),
-		glamour.WithWordWrap(width-4),
+		glamour.WithWordWrap(wrapWidth),
 	)
 	if r != nil {
 		m.renderer = r

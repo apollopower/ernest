@@ -261,13 +261,18 @@ func TestStream_APIError(t *testing.T) {
 	defer server.Close()
 
 	a := NewAnthropic("test-key", "test-model")
+	a.apiURL = server.URL
 	a.client = server.Client()
 
-	// Override the URL by creating a custom request — we need to test the error path.
-	// For this test, we'll just verify that a non-200 status returns an error.
-	// The real URL won't be hit because we check the API key first.
-	// Instead, test via the full flow with a mock server.
-	// This requires temporarily overriding the API URL, which we can't do cleanly.
-	// So we test the error path through the router test instead.
-	t.Skip("API error path tested via router integration")
+	messages := []Message{
+		{Role: RoleUser, Content: []ContentBlock{{Type: "text", Text: "Hi"}}},
+	}
+
+	_, err := a.Stream(context.Background(), "", messages, nil)
+	if err == nil {
+		t.Fatal("expected error for non-200 status")
+	}
+	if !strings.Contains(err.Error(), "status 500") {
+		t.Errorf("expected status 500 in error, got: %v", err)
+	}
 }

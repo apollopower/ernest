@@ -5,6 +5,7 @@ import (
 	"ernest/internal/config"
 	"ernest/internal/provider"
 	"log"
+	"sync"
 )
 
 // AgentEvent is what the TUI receives from the agent loop.
@@ -18,6 +19,7 @@ type AgentEvent struct {
 
 // Agent manages conversation history and dispatches prompts to providers.
 type Agent struct {
+	mu        sync.Mutex
 	router    *provider.Router
 	claudeCfg *config.ClaudeConfig
 	history   []provider.Message
@@ -40,13 +42,17 @@ func (a *Agent) Run(ctx context.Context, userPrompt string) <-chan AgentEvent {
 	go func() {
 		defer close(events)
 
+		a.mu.Lock()
 		a.history = append(a.history, provider.Message{
 			Role:    provider.RoleUser,
 			Content: []provider.ContentBlock{{Type: "text", Text: userPrompt}},
 		})
+		history := make([]provider.Message, len(a.history))
+		copy(history, a.history)
+		a.mu.Unlock()
 
 		streamCh, providerName, err := a.router.Stream(
-			ctx, a.claudeCfg.SystemPrompt, a.history, nil,
+			ctx, a.claudeCfg.SystemPrompt, history, nil,
 		)
 		if err != nil {
 			events <- AgentEvent{Type: "error", Error: err}
@@ -56,7 +62,10 @@ func (a *Agent) Run(ctx context.Context, userPrompt string) <-chan AgentEvent {
 		events <- AgentEvent{Type: "provider_switch", ProviderName: providerName}
 
 		response := a.consumeStream(ctx, streamCh, events)
+
+		a.mu.Lock()
 		a.history = append(a.history, response)
+		a.mu.Unlock()
 
 		events <- AgentEvent{Type: "done"}
 	}()
