@@ -58,6 +58,17 @@ Ernest reads the same `.claude/` directory structure that Claude Code uses:
 
 All of these are assembled into the system prompt sent to whichever provider is active.
 
+## Values
+
+Ernest's design decisions are guided by a ranked set of values. When two conflict, the higher-ranked value wins.
+
+1. **Resilience** — work never stops, even when providers go down
+2. **Performance** — instant startup, streaming-first, single binary
+3. **Terseness** — every line of code earns its place
+4. **Correctness** — the tool does what it says it does
+5. **Portability** — runs on Linux and macOS without runtime dependencies
+6. **Minimalism** — build what's needed, nothing more
+
 ## License
 
 [MIT](LICENSE)
