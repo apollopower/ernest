@@ -48,6 +48,14 @@ var (
 				BorderForeground(muted).
 				Padding(0, 1)
 
+	// Tool events
+	toolLabelStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.AdaptiveColor{Light: "#D4A017", Dark: "#FFD700"}).
+			Bold(true)
+
+	toolContentStyle = lipgloss.NewStyle().
+				Foreground(muted)
+
 	// Help text
 	helpStyle = lipgloss.NewStyle().
 			Foreground(muted)
