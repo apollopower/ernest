@@ -73,6 +73,7 @@ type StreamDoneMsg struct{}                            // signals streaming comp
 | 5 | User submits multiple messages in sequence | Conversation | Full conversation history sent to API each turn. Context builds naturally. |
 | 6 | Project has `.claude/CLAUDE.md` | Launch ernest in project dir | CLAUDE.md content sent as system prompt to Anthropic API |
 | 7 | Assistant response contains markdown | Code blocks, bold, lists | Rendered with syntax highlighting via Glamour |
+| 8 | No `.claude/` directory and no CLAUDE.md | Launch ernest in empty dir | System prompt is empty string. Anthropic API call omits the `system` field (or sends empty). Model responds normally without custom instructions. |
 
 ---
 
@@ -95,9 +96,10 @@ func NewAnthropic(apiKey, model string) *Anthropic
 
 **Stream method:**
 - POST to `https://api.anthropic.com/v1/messages`
-- Headers: `x-api-key`, `anthropic-version: 2023-06-01`, `content-type: application/json`
-- Body: marshal messages to Anthropic's format, set `stream: true`, include `system` field from system prompt, include `max_tokens: 8096`
-- Parse SSE response line-by-line using `bufio.Scanner`:
+- Headers: `x-api-key`, `anthropic-version` (define as `const AnthropicVersion = "2023-06-01"`), `content-type: application/json`
+- Body: marshal messages to Anthropic's format, set `stream: true`, include `system` field from system prompt, include `max_tokens: 8192`
+- Parse SSE response line-by-line using `bufio.Scanner` (call `Scanner.Buffer()` to increase from the default 64KB limit to 1MB, since future tool_use input JSON could exceed 64KB):
+
   - Lines starting with `event:` set the current event type
   - Lines starting with `data:` contain JSON payload
   - Handle event types:
@@ -120,12 +122,13 @@ func NewAnthropic(apiKey, model string) *Anthropic
 - Tool results → `{"type": "tool_result", "tool_use_id": "...", "content": "..."}` (future-proofing)
 
 **Healthy method:**
-- Return true (health is tracked by the router, not the provider itself)
+- Return true. Health is tracked by the router, not the provider itself. The `Healthy()` method exists to satisfy the `Provider` interface contract — providers could override it in future (e.g., to check if an API key is set) but for now the router is the sole authority on health state.
 
 ### Step 3: Router (`internal/provider/router.go`)
 
-Implement as specified in the spec:
+Implement based on the spec, with one deviation: the constructor accepts a `cooldown` parameter instead of hardcoding 30s, making it testable:
 - `NewRouter(providers []Provider, cooldown time.Duration) *Router`
+- The spec hardcodes `cooldown: 30 * time.Second` — we parameterize it so tests can use short durations. Production code passes the value from `config.CooldownSeconds`.
 - `Stream()` tries providers in order, skipping unhealthy ones in cooldown
 - `markHealthy()` / `markUnhealthy()` update the health cache
 - For this plan there's only one provider, but the router still wraps it for the correct API surface
@@ -145,26 +148,59 @@ func (a *Agent) Run(ctx context.Context, userPrompt string) <-chan AgentEvent
   - `done` → forward as `AgentEvent{Type: "done", Usage: usage}`
   - `error` → forward as `AgentEvent{Type: "error", Error: err}`
 - Accumulate assistant response text and append complete message to history
-- No tool call loop — if model returns tool use, just include the text portion and stop
+- No tool call loop — if model returns tool use, include any text content blocks and stop
 
-Also implement `consumeStream()` helper that reads from the stream channel and builds the complete `Message` for history.
+**`consumeStream()` helper:**
+
+Reads from the provider's stream channel and builds the complete `Message` for history:
+- `text_delta` events → accumulate into a text `ContentBlock`, forward as `AgentEvent{Type: "text"}`
+- `tool_use_start` / `tool_input_delta` events → ignore in Phase 1 (the stream may contain these if the model decides to call a tool despite no tools being offered, which is unlikely but possible). Log and skip.
+- `done` event → finalize the message, forward usage
+- `error` event → forward as `AgentEvent{Type: "error"}`. On error, still append whatever partial text was accumulated to history (so the user can see what was generated before the failure), but mark the turn as errored.
+- Returns the assembled `provider.Message` containing all accumulated content blocks.
 
 ### Step 5: Wire Agent into TUI (`internal/tui/app.go`)
 
+**Important: BubbleTea value-receiver pattern.** `AppModel.Update` uses a value receiver (BubbleTea's standard pattern). Every mutation path must set fields on the local `m` and return it — mutations inside closures or goroutines are silently lost. The `tea.Cmd` functions below return messages; they do not mutate `m` directly.
+
 Modify `AppModel`:
-- Add `agent *agent.Agent` field and `streaming bool` flag
+- Add `agent *agent.Agent`, `streaming bool`, and `cancelStream context.CancelFunc` fields
 - Change `NewAppModel` to accept `*agent.Agent`
-- On `SubmitMsg`:
-  - Add user message to chat
-  - Start agent goroutine via `agent.Run()`
-  - Use a BubbleTea command that reads from the agent's event channel and dispatches `AgentEventMsg` back to the TUI
-- On `AgentEventMsg`:
-  - `"text"` → append text delta to current streaming message in chat
-  - `"provider_switch"` → update status bar
-  - `"done"` → finalize message, update token count, re-enable input
-  - `"error"` → display error in chat
-- Disable input while streaming (prevent sending during active response)
-- Ctrl+C during streaming → cancel the context, stop the stream
+
+**Context lifecycle:**
+- On `SubmitMsg`: create `ctx, cancel := context.WithCancel(context.Background())`. Store `cancel` in `m.cancelStream`. Pass `ctx` to `agent.Run()`.
+- On `AgentEvent{Type: "done"}` or `AgentEvent{Type: "error"}`: call `m.cancelStream()` to clean up, set `m.cancelStream = nil`.
+- On `Ctrl+C` while streaming: call `m.cancelStream()` to abort the HTTP connection and stop the agent loop. Set `m.streaming = false`, re-enable input.
+- Between turns: the old context is cancelled and a fresh one is created on the next submit.
+
+**BubbleTea channel-reading pattern:**
+
+Use a command that performs a single blocking read from the agent channel and returns one message. The TUI dispatches the next read after processing each event:
+
+```go
+func waitForAgentEvent(ch <-chan agent.AgentEvent) tea.Cmd {
+    return func() tea.Msg {
+        event, ok := <-ch
+        if !ok {
+            return StreamDoneMsg{}
+        }
+        return AgentEventMsg{Event: event}
+    }
+}
+```
+
+On `SubmitMsg`: return `waitForAgentEvent(ch)` as the initial command.
+On each `AgentEventMsg`: process the event, then return `waitForAgentEvent(ch)` to schedule the next read.
+On `StreamDoneMsg`: the channel is closed, streaming is complete.
+
+**Event handling:**
+- `"text"` → append text delta to current streaming message in chat
+- `"provider_switch"` → dispatch `StatusUpdateMsg` to status bar (forward through `m.statusBar.Update()`)
+- `"done"` → finalize message, dispatch `StatusUpdateMsg` with token counts, set `m.streaming = false`, re-enable input
+- `"error"` → display error in chat, set `m.streaming = false`, re-enable input
+
+**Input gating:**
+- While `m.streaming == true`, `SubmitMsg` is ignored (input is visually disabled but keystrokes are still captured for Ctrl+C handling)
 
 ### Step 6: Streaming Chat Updates (`internal/tui/chat.go`)
 
@@ -179,6 +215,8 @@ Use Glamour to render assistant messages:
 - Create a Glamour renderer with `glamour.WithAutoStyle()` (adapts to terminal background)
 - Render assistant message content through Glamour on finalization
 - During streaming, render as plain text (avoid re-rendering markdown on every delta)
+
+**Known UX limitation:** During streaming the user sees raw markdown syntax (e.g., `**bold**`, triple-backtick code blocks). On finalization the view "jumps" to rendered output. This is acceptable for Phase 1. A future improvement could re-render through Glamour periodically (e.g., on a 500ms tick) to smooth the transition.
 
 ### Step 8: Update Entry Point (`cmd/ernest/main.go`)
 
@@ -229,6 +267,8 @@ Steps 2 + 3 + 4 → Step 9 (Tests)
 | BubbleTea update loop blocking on channel reads | Medium | High | Use a `tea.Cmd` that does a single channel read and re-dispatches, rather than blocking the update loop. Each read returns one event and schedules the next read. |
 | Glamour rendering performance on large responses | Low | Medium | Only render markdown on finalization, not during streaming. Stream as plain text. |
 | Context cancellation not closing HTTP connection cleanly | Medium | Low | Ensure `resp.Body.Close()` is called in a deferred cleanup and on context cancellation. |
+| BubbleTea value-receiver mutation loss | Medium | High | `AppModel.Update` uses value receivers. All mutations must happen on the local `m` that is returned — never inside closures or goroutines. Use `tea.Cmd` functions that return messages rather than mutating state directly. Document this pattern clearly in code comments. |
+| Streaming markdown "jump" on finalization | High | Low | Known UX limitation. Raw markdown visible during streaming, rendered on completion. Acceptable for Phase 1; periodic re-rendering can be added later. |
 
 ---
 
@@ -259,4 +299,5 @@ This plan does **NOT** include:
 - [ ] Write provider tests (message conversion, SSE parsing)
 - [ ] Write router tests (fallback, cooldown)
 - [ ] Write agent loop tests (mock provider)
+- [ ] Test: empty system prompt does not break Anthropic API call
 - [ ] Verify: end-to-end streaming conversation with real Anthropic API
