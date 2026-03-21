@@ -497,15 +497,15 @@ This plan does **NOT** include:
 ## Implementation Checklist
 
 ### Phase 1: Tool Interface and Core Tools
-- [ ] Implement `internal/tools/tools.go` — Tool interface and Registry
-- [ ] Implement `internal/tools/file_read.go` — read_file tool
-- [ ] Implement `internal/tools/file_write.go` — write_file tool
-- [ ] Implement `internal/tools/str_replace.go` — str_replace (str_replace) tool
-- [ ] Implement `internal/tools/bash.go` — bash tool
-- [ ] Implement `internal/tools/glob.go` — glob tool
-- [ ] Implement `internal/tools/grep.go` — grep tool
-- [ ] Write tests for all tools and registry
-- [ ] Verify: `go build`, `go vet`, `go test` all pass
+- [x] Implement `internal/tools/tools.go` — Tool interface and Registry
+- [x] Implement `internal/tools/file_read.go` — read_file tool
+- [x] Implement `internal/tools/file_write.go` — write_file tool
+- [x] Implement `internal/tools/str_replace.go` — str_replace tool
+- [x] Implement `internal/tools/bash.go` — bash tool
+- [x] Implement `internal/tools/glob.go` — glob tool
+- [x] Implement `internal/tools/grep.go` — grep tool
+- [x] Write tests for all tools and registry
+- [x] Verify: `go build`, `go vet`, `go test` all pass
 
 ### Phase 2: Agent Loop Upgrade
 - [ ] Update `anthropic.go`: emit `content_block_stop` event, extract `stop_reason` from `message_delta`
