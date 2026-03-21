@@ -1,7 +1,7 @@
 # Anthropic Streaming Provider
 
 ## Date: 2026-03-21
-## Status: Draft
+## Status: Complete
 ## GitHub Issue: #1
 
 ---
@@ -288,16 +288,16 @@ This plan does **NOT** include:
 
 ## Implementation Checklist
 
-- [ ] Create `internal/provider/provider.go` — types and interface
-- [ ] Create `internal/provider/anthropic.go` — Anthropic Messages API with SSE streaming
-- [ ] Create `internal/provider/router.go` — health-checking priority router
-- [ ] Create `internal/agent/loop.go` — text-only agent loop
-- [ ] Update `internal/tui/chat.go` — streaming message methods + Glamour rendering
-- [ ] Update `internal/tui/app.go` — wire agent, handle AgentEventMsg, streaming state
-- [ ] Update `internal/tui/status.go` — token count updates from agent events
-- [ ] Update `cmd/ernest/main.go` — wire provider → router → agent → TUI
-- [ ] Write provider tests (message conversion, SSE parsing)
-- [ ] Write router tests (fallback, cooldown)
-- [ ] Write agent loop tests (mock provider)
-- [ ] Test: empty system prompt does not break Anthropic API call
-- [ ] Verify: end-to-end streaming conversation with real Anthropic API
+- [x] Create `internal/provider/provider.go` — types and interface
+- [x] Create `internal/provider/anthropic.go` — Anthropic Messages API with SSE streaming
+- [x] Create `internal/provider/router.go` — health-checking priority router
+- [x] Create `internal/agent/loop.go` — text-only agent loop
+- [x] Update `internal/tui/chat.go` — streaming message methods + Glamour rendering
+- [x] Update `internal/tui/app.go` — wire agent, handle AgentEventMsg, streaming state
+- [x] Update `internal/tui/status.go` — token count updates from agent events
+- [x] Update `cmd/ernest/main.go` — wire provider → router → agent → TUI
+- [x] Write provider tests (message conversion, SSE parsing)
+- [x] Write router tests (fallback, cooldown)
+- [x] Write agent loop tests (mock provider)
+- [x] Test: empty system prompt does not break Anthropic API call
+- [x] Verify: end-to-end streaming conversation with real Anthropic API

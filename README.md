@@ -32,7 +32,7 @@ Ernest reads its own config from `~/.config/ernest/config.yaml`:
 providers:
   - name: anthropic
     api_key_env: ANTHROPIC_API_KEY
-    model: claude-opus-4-6-20250610
+    model: claude-opus-4-6
     priority: 1
 
   - name: openai
@@ -44,7 +44,7 @@ cooldown_seconds: 30
 max_context_tokens: 180000
 ```
 
-If no config file exists, Ernest defaults to Anthropic with `claude-opus-4-6-20250610`.
+If no config file exists, Ernest defaults to Anthropic with `claude-opus-4-6`.
 
 ## Claude config
 

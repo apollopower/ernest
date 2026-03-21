@@ -112,7 +112,7 @@ Only `cmd/ernest/`, `internal/config/`, and `internal/tui/` will have code in th
 **`internal/config/config.go`** — Ernest's own config:
 - Define `Config` and `ProviderConfig` structs
 - `Load()` function that reads `~/.config/ernest/config.yaml`
-- Returns sensible defaults if the file doesn't exist (Anthropic, claude-opus-4-6-20250610, priority 1)
+- Returns sensible defaults if the file doesn't exist (Anthropic, claude-opus-4-6, priority 1)
 - Validates that referenced env vars exist (warning, not fatal)
 
 **`internal/config/claude.go`** — Claude config loader:
