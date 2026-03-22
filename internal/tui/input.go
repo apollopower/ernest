@@ -45,11 +45,21 @@ func (m InputModel) Update(msg tea.Msg) (InputModel, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.Type {
 		case tea.KeyEnter:
-			// Submit on Enter, newline on Alt+Enter/Shift+Enter
+			// Newline on Alt+Enter or when line ends with \
 			if msg.Alt {
 				break // fall through to textarea update for newline
 			}
-			text := strings.TrimSpace(m.textarea.Value())
+			value := m.textarea.Value()
+			if strings.HasSuffix(strings.TrimRight(value, " \t"), "\\") {
+				// Remove trailing backslash and insert a newline
+				trimmed := strings.TrimRight(value, " \t")
+				trimmed = trimmed[:len(trimmed)-1]
+				m.textarea.SetValue(trimmed + "\n")
+				// Move cursor to end
+				m.textarea.CursorEnd()
+				return m, nil
+			}
+			text := strings.TrimSpace(value)
 			if text == "" {
 				return m, nil
 			}

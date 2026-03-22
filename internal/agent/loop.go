@@ -65,6 +65,15 @@ func New(router *provider.Router, registry *tools.Registry, claudeCfg *config.Cl
 	}
 }
 
+// SetRouter replaces the agent's router at runtime. Called by the TUI
+// after provider changes (/provider add, /provider remove, /model).
+// Safe because Run() snapshots the router under the mutex at the start of each turn.
+func (a *Agent) SetRouter(router *provider.Router) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.router = router
+}
+
 // LoadSession replaces the agent's conversation history with messages from
 // a saved session. Called by the TUI when resuming.
 func (a *Agent) LoadSession(messages []provider.Message) {
@@ -328,9 +337,10 @@ func (a *Agent) Run(ctx context.Context, userPrompt string) <-chan AgentEvent {
 			a.mu.Lock()
 			history := make([]provider.Message, len(a.history))
 			copy(history, a.history)
+			router := a.router // snapshot under lock for SetRouter safety
 			a.mu.Unlock()
 
-			streamCh, providerName, err := a.router.Stream(
+			streamCh, providerName, err := router.Stream(
 				ctx, systemPrompt, history, toolDefs,
 			)
 			if err != nil {

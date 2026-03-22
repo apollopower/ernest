@@ -147,7 +147,7 @@ func main() {
 	if isHeadless {
 		runHeadless(a, sess, *prompt, headless.OutputFormat(*output))
 	} else {
-		runTUI(cfg, claudeCfg, a, sess)
+		runTUI(cfg, claudeCfg, a, sess, creds)
 	}
 }
 
@@ -188,8 +188,8 @@ func runHeadless(a *agent.Agent, sess *session.Session, prompt string, format he
 	}
 }
 
-func runTUI(cfg config.Config, claudeCfg *config.ClaudeConfig, a *agent.Agent, sess *session.Session) {
-	app := tui.NewAppModel(cfg, claudeCfg, a, sess)
+func runTUI(cfg config.Config, claudeCfg *config.ClaudeConfig, a *agent.Agent, sess *session.Session, creds *config.Credentials) {
+	app := tui.NewAppModel(cfg, claudeCfg, a, sess, creds)
 	p := tea.NewProgram(app, tea.WithAltScreen())
 
 	if _, err := p.Run(); err != nil {

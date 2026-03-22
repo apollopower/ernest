@@ -4,12 +4,14 @@ import (
 	"context"
 	"ernest/internal/agent"
 	"ernest/internal/config"
+	"ernest/internal/provider"
 	"ernest/internal/session"
 	"fmt"
 	"log"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -36,7 +38,10 @@ type AppModel struct {
 	agent          *agent.Agent
 	session        *session.Session
 	cfg            config.Config
+	creds          *config.Credentials
 	confirmDialog  *ToolConfirmModel
+	picker         *PickerModel
+	pickerAction   string // "switch_provider" or "switch_model" — what to do with the result
 	focused        bool   // true = input focused, false = vim nav mode
 	streaming      bool   // true while agent is streaming a response
 	confirming     bool   // true while tool confirmation dialog is visible
@@ -51,7 +56,7 @@ type AppModel struct {
 	agentCh        <-chan agent.AgentEvent
 }
 
-func NewAppModel(cfg config.Config, claudeCfg *config.ClaudeConfig, a *agent.Agent, sess *session.Session) AppModel {
+func NewAppModel(cfg config.Config, claudeCfg *config.ClaudeConfig, a *agent.Agent, sess *session.Session, creds *config.Credentials) AppModel {
 	primary := cfg.PrimaryProvider()
 
 	return AppModel{
@@ -61,6 +66,7 @@ func NewAppModel(cfg config.Config, claudeCfg *config.ClaudeConfig, a *agent.Age
 		agent:     a,
 		session:   sess,
 		cfg:       cfg,
+		creds:     creds,
 		focused:   true, // start with input focused
 	}
 }
@@ -140,6 +146,14 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case AgentEventMsg:
 		return m.handleAgentEvent(msg.Event)
+
+	case PickerResult:
+		return m.handlePickerResult(msg)
+
+	case PickerCancelMsg:
+		m.picker = nil
+		m.pickerAction = ""
+		return m, nil
 
 	case CompactionDoneMsg:
 		m.compacting = false
@@ -222,6 +236,12 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		if msg.Type == tea.KeyEsc {
+			// Dismiss picker
+			if m.picker != nil {
+				m.picker = nil
+				m.pickerAction = ""
+				return m, nil
+			}
 			// During confirmation, Esc is a no-op — don't leak into focus management
 			if m.confirming {
 				return m, nil
@@ -245,6 +265,15 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			dialog := *m.confirmDialog
 			dialog, cmd = dialog.Update(msg)
 			m.confirmDialog = &dialog
+			return m, cmd
+		}
+
+		// Picker captures keys when active
+		if m.picker != nil {
+			var cmd tea.Cmd
+			picker := *m.picker
+			picker, cmd = picker.Update(msg)
+			m.picker = &picker
 			return m, cmd
 		}
 
@@ -460,10 +489,318 @@ func (m AppModel) executeCmd(name, args string) (tea.Model, tea.Cmd) {
 	case "resume":
 		return m.handleResume(args)
 
+	case "providers":
+		return m.handleProviders()
+
+	case "provider":
+		return m.handleProvider(args)
+
+	case "model":
+		return m.handleModel(args)
+
 	}
 
 	m.chat.AddSystemMessage("Unknown command: " + name)
 	return m, nil
+}
+
+// handleProviders lists all configured providers with status.
+func (m AppModel) handleProviders() (tea.Model, tea.Cmd) {
+	sorted := m.cfg.SortedProviders()
+	if len(sorted) == 0 {
+		m.chat.AddSystemMessage("No providers configured. Use /provider add <type> <key> to add one.")
+		return m, nil
+	}
+
+	var lines []string
+	lines = append(lines, "Providers:")
+	for _, p := range sorted {
+		status := "no key"
+		if p.HasAPIKeyWithCredentials(m.creds) {
+			status = "connected"
+		}
+		model := p.Model
+		if model == "" {
+			model = "(default)"
+		}
+		line := fmt.Sprintf("  %d. %s (%s) — %s", p.Priority, p.Name, model, status)
+		if p.BaseURL != "" {
+			line += fmt.Sprintf(" [%s]", p.BaseURL)
+		}
+		lines = append(lines, line)
+	}
+
+	primary := m.cfg.PrimaryProvider()
+	lines = append(lines, "")
+	lines = append(lines, "Active: "+primary.Name)
+
+	m.chat.AddSystemMessage(strings.Join(lines, "\n"))
+	return m, nil
+}
+
+// handleProvider handles /provider add and /provider remove.
+func (m AppModel) handleProvider(args string) (tea.Model, tea.Cmd) {
+	parts := strings.SplitN(args, " ", 2)
+	if len(parts) == 0 || parts[0] == "" {
+		m.chat.AddSystemMessage("Usage: /provider add <type> <key> or /provider remove <name>")
+		return m, nil
+	}
+
+	subCmd := parts[0]
+	subArgs := ""
+	if len(parts) > 1 {
+		subArgs = parts[1]
+	}
+
+	switch subCmd {
+	case "add":
+		return m.handleProviderAdd(subArgs)
+	case "remove":
+		return m.handleProviderRemove(subArgs)
+	default:
+		m.chat.AddSystemMessage("Unknown provider command: " + subCmd + ". Use 'add' or 'remove'.")
+		return m, nil
+	}
+}
+
+// handleProviderAdd handles /provider add <type> <key> [--model X] [--base-url Y]
+func (m AppModel) handleProviderAdd(args string) (tea.Model, tea.Cmd) {
+	parts := strings.Fields(args)
+	if len(parts) < 2 {
+		m.chat.AddSystemMessage("Usage: /provider add <type> <key> [--model <model>] [--base-url <url>]")
+		return m, nil
+	}
+
+	providerName := strings.ToLower(parts[0])
+	apiKey := parts[1]
+
+	// Parse optional flags
+	model := ""
+	baseURL := ""
+	for i := 2; i < len(parts); i++ {
+		switch parts[i] {
+		case "--model":
+			if i+1 >= len(parts) {
+				m.chat.AddSystemMessage("--model requires a value")
+				return m, nil
+			}
+			model = parts[i+1]
+			i++
+		case "--base-url":
+			if i+1 >= len(parts) {
+				m.chat.AddSystemMessage("--base-url requires a value")
+				return m, nil
+			}
+			baseURL = parts[i+1]
+			i++
+		default:
+			m.chat.AddSystemMessage("Unknown flag: " + parts[i])
+			return m, nil
+		}
+	}
+
+	// Default models per provider
+	if model == "" {
+		switch providerName {
+		case "anthropic":
+			model = "claude-opus-4-6"
+		case "openai":
+			model = "gpt-4.1"
+		case "gemini":
+			model = "gemini-2.5-pro"
+		case "siliconflow":
+			model = "deepseek-ai/DeepSeek-R1"
+			if baseURL == "" {
+				baseURL = "https://api.siliconflow.com/v1"
+			}
+		default:
+			model = "default"
+		}
+	}
+
+	// Save credentials
+	if m.creds == nil {
+		m.creds = &config.Credentials{}
+	}
+	m.creds.SetKey(providerName, apiKey)
+	if err := config.SaveCredentials(m.creds); err != nil {
+		m.chat.AddSystemMessage("Error saving credentials: " + err.Error())
+		return m, nil
+	}
+
+	// Save config
+	m.cfg.AddProvider(config.ProviderConfig{
+		Name:    providerName,
+		Model:   model,
+		BaseURL: baseURL,
+	})
+	if err := config.SaveConfig(m.cfg); err != nil {
+		m.chat.AddSystemMessage("Error saving config: " + err.Error())
+		return m, nil
+	}
+
+	// Rebuild router
+	m.rebuildRouter()
+
+	msg := fmt.Sprintf("Added provider: %s (model: %s)", providerName, model)
+	if baseURL != "" {
+		msg += fmt.Sprintf(" [%s]", baseURL)
+	}
+	m.chat.AddSystemMessage(msg)
+	return m, nil
+}
+
+// handleProviderRemove handles /provider remove <name>
+func (m AppModel) handleProviderRemove(args string) (tea.Model, tea.Cmd) {
+	name := strings.TrimSpace(args)
+	if name == "" {
+		m.chat.AddSystemMessage("Usage: /provider remove <name>")
+		return m, nil
+	}
+
+	m.cfg.RemoveProvider(name)
+	if err := config.SaveConfig(m.cfg); err != nil {
+		m.chat.AddSystemMessage("Error saving config: " + err.Error())
+		return m, nil
+	}
+
+	if m.creds != nil {
+		m.creds.Remove(name)
+		if err := config.SaveCredentials(m.creds); err != nil {
+			m.chat.AddSystemMessage("Warning: failed to save credentials: " + err.Error())
+		}
+	}
+
+	m.rebuildRouter()
+	m.chat.AddSystemMessage("Removed provider: " + name)
+	return m, nil
+}
+
+// handleModel handles /model — opens a picker to switch active provider, or /model <provider> <model> to change model string.
+func (m AppModel) handleModel(args string) (tea.Model, tea.Cmd) {
+	parts := strings.Fields(args)
+
+	if len(parts) == 0 {
+		// Open picker to switch active provider
+		sorted := m.cfg.SortedProviders()
+		if len(sorted) == 0 {
+			m.chat.AddSystemMessage("No providers configured.")
+			return m, nil
+		}
+		var items []PickerItem
+		for _, p := range sorted {
+			label := fmt.Sprintf("%s — %s", p.Name, p.Model)
+			if p.BaseURL != "" {
+				label += fmt.Sprintf(" [%s]", p.BaseURL)
+			}
+			items = append(items, PickerItem{
+				ID:    p.Name,
+				Label: label,
+			})
+		}
+		picker := NewPickerModel("Switch active provider", items, m.width)
+		m.picker = &picker
+		m.pickerAction = "switch_provider"
+		return m, nil
+	}
+
+	if len(parts) != 2 {
+		m.chat.AddSystemMessage("Usage: /model (opens picker) or /model <provider> <model>")
+		return m, nil
+	}
+
+	providerName := parts[0]
+	modelName := parts[1]
+
+	return m.applyModelChange(providerName, modelName)
+}
+
+func (m AppModel) applyModelChange(providerName, modelName string) (tea.Model, tea.Cmd) {
+	if !m.cfg.SetModel(providerName, modelName) {
+		m.chat.AddSystemMessage("Provider not found: " + providerName)
+		return m, nil
+	}
+
+	if err := config.SaveConfig(m.cfg); err != nil {
+		m.chat.AddSystemMessage("Error saving config: " + err.Error())
+		return m, nil
+	}
+
+	m.rebuildRouter()
+	m.chat.AddSystemMessage(fmt.Sprintf("Model for %s set to %s", providerName, modelName))
+	return m, nil
+}
+
+// handlePickerResult processes the user's selection from a picker modal.
+func (m AppModel) handlePickerResult(result PickerResult) (tea.Model, tea.Cmd) {
+	m.picker = nil
+	action := m.pickerAction
+	m.pickerAction = ""
+
+	switch action {
+	case "switch_provider":
+		// Set selected provider to priority 1, bump others
+		m.makeProviderPrimary(result.ID)
+		if err := config.SaveConfig(m.cfg); err != nil {
+			m.chat.AddSystemMessage("Error saving config: " + err.Error())
+			return m, nil
+		}
+		m.rebuildRouter()
+		m.chat.AddSystemMessage(fmt.Sprintf("Switched to %s", result.ID))
+		return m, nil
+	}
+
+	return m, nil
+}
+
+// makeProviderPrimary sets the named provider to priority 1 and renumbers others.
+func (m *AppModel) makeProviderPrimary(name string) {
+	// Set selected to priority 0 (will sort first), then renumber sequentially
+	for i, p := range m.cfg.Providers {
+		if strings.EqualFold(p.Name, name) {
+			m.cfg.Providers[i].Priority = 0
+		}
+	}
+	sorted := m.cfg.SortedProviders()
+	for i, p := range sorted {
+		for j := range m.cfg.Providers {
+			if m.cfg.Providers[j].Name == p.Name {
+				m.cfg.Providers[j].Priority = i + 1
+			}
+		}
+	}
+}
+
+// rebuildRouter creates a new router from the current config and credentials,
+// then hot-swaps it on the agent and updates the status bar.
+func (m *AppModel) rebuildRouter() {
+	var providers []provider.Provider
+	for _, pc := range m.cfg.SortedProviders() {
+		apiKey := pc.ResolveAPIKeyWithCredentials(m.creds)
+		if apiKey == "" && pc.BaseURL == "" {
+			continue
+		}
+		name := strings.ToLower(pc.Name)
+		switch {
+		case name == "anthropic":
+			providers = append(providers, provider.NewAnthropic(apiKey, pc.Model))
+		default:
+			providers = append(providers, provider.NewOpenAICompat(pc.Name, apiKey, pc.Model, pc.BaseURL))
+		}
+	}
+
+	if len(providers) > 0 && m.agent != nil {
+		cooldown := time.Duration(m.cfg.CooldownSeconds) * time.Second
+		router := provider.NewRouter(providers, cooldown)
+		m.agent.SetRouter(router)
+	}
+
+	// Update status bar with the active (priority 1) provider
+	primary := m.cfg.PrimaryProvider()
+	m.statusBar, _ = m.statusBar.Update(StatusUpdateMsg{
+		Provider: primary.Name,
+		Model:    primary.Model,
+	})
 }
 
 // knownCommands is the set of recognized slash/colon commands.
@@ -471,6 +808,7 @@ var knownCommands = map[string]bool{
 	"q": true, "quit": true,
 	"status": true, "save": true, "clear": true,
 	"compact": true, "resume": true,
+	"providers": true, "provider": true, "model": true,
 }
 
 func isKnownCommand(name string) bool {
@@ -637,6 +975,14 @@ func (m AppModel) View() string {
 		dialogView := m.confirmDialog.View()
 		statusView := m.statusBar.View()
 		return chatView + "\n" + dialogView + "\n" + statusView
+	}
+
+	// Show picker overlay when active
+	if m.picker != nil {
+		chatView := m.chat.View()
+		pickerView := m.picker.View()
+		statusView := m.statusBar.View()
+		return chatView + "\n" + pickerView + "\n" + statusView
 	}
 
 	help := ""
