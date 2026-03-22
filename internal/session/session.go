@@ -63,7 +63,7 @@ func New(projectDir string) *Session {
 // Save writes the session to disk at SessionDir()/{id}.json.
 func (s *Session) Save() error {
 	dir := SessionDir()
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("cannot create session directory: %w", err)
 	}
 
@@ -74,7 +74,7 @@ func (s *Session) Save() error {
 	}
 
 	path := filepath.Join(dir, s.ID+".json")
-	return os.WriteFile(path, data, 0o644)
+	return os.WriteFile(path, data, 0o600)
 }
 
 // SetMessages updates the session's messages and summary.
@@ -111,8 +111,8 @@ func Load(path string) (*Session, error) {
 		return nil, fmt.Errorf("cannot parse session file: %w", err)
 	}
 
-	if s.Version > currentVersion {
-		return nil, fmt.Errorf("session version %d not supported (max %d)", s.Version, currentVersion)
+	if s.Version < 1 || s.Version > currentVersion {
+		return nil, fmt.Errorf("session version %d not supported (expected 1-%d)", s.Version, currentVersion)
 	}
 
 	return &s, nil

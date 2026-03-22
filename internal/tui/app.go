@@ -382,12 +382,16 @@ func (m AppModel) executeCmd(name, args string) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "clear":
-		// Save current session before clearing
-		m.saveSession()
+		// Save current session before clearing — abort if save fails
+		if err := m.saveSession(); err != nil {
+			m.chat.AddSystemMessage("Error saving session before clearing: " + err.Error())
+			return m, nil
+		}
 		m.chat = NewChatModel()
 		m.chat.SetSize(m.width, m.height-6) // reapply layout
 		if m.session != nil {
-			m.session = session.New(m.session.ProjectDir)
+			// Reset in place to preserve shared pointer with main.go auto-save
+			*m.session = *session.New(m.session.ProjectDir)
 		}
 		if m.agent != nil {
 			m.agent.ClearHistory()

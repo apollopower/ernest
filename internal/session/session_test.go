@@ -23,7 +23,9 @@ func TestNew(t *testing.T) {
 func TestSaveAndLoad(t *testing.T) {
 	// Override session dir for testing
 	dir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir) // Unix
+	t.Setenv("APPDATA", dir)         // Windows
+	t.Setenv("HOME", dir)            // macOS fallback
 
 	s := New("/tmp/project")
 	s.SetMessages([]provider.Message{
@@ -76,7 +78,9 @@ func TestSaveAndLoad(t *testing.T) {
 
 func TestSaveAndLoad_AllContentBlockTypes(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir) // Unix
+	t.Setenv("APPDATA", dir)         // Windows
+	t.Setenv("HOME", dir)            // macOS fallback
 
 	s := New("/tmp/project")
 	s.SetMessages([]provider.Message{
@@ -154,7 +158,9 @@ func TestSaveAndLoad_AllContentBlockTypes(t *testing.T) {
 
 func TestListSessions(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir) // Unix
+	t.Setenv("APPDATA", dir)         // Windows
+	t.Setenv("HOME", dir)            // macOS fallback
 
 	// Create two sessions
 	s1 := New("/project1")
@@ -190,7 +196,9 @@ func TestListSessions(t *testing.T) {
 
 func TestListSessions_EmptyDir(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir) // Unix
+	t.Setenv("APPDATA", dir)         // Windows
+	t.Setenv("HOME", dir)            // macOS fallback
 
 	sessions, err := ListSessions()
 	if err != nil {
@@ -203,17 +211,25 @@ func TestListSessions_EmptyDir(t *testing.T) {
 
 func TestListSessions_SkipsCorruptFiles(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir) // Unix
+	t.Setenv("APPDATA", dir)         // Windows
+	t.Setenv("HOME", dir)            // macOS fallback
 
 	sessDir := SessionDir()
-	os.MkdirAll(sessDir, 0o755)
+	if err := os.MkdirAll(sessDir, 0o755); err != nil {
+		t.Fatalf("failed to create session dir: %v", err)
+	}
 
 	// Write a valid session
 	s := New("/project")
-	s.Save()
+	if err := s.Save(); err != nil {
+		t.Fatalf("failed to save valid session: %v", err)
+	}
 
 	// Write a corrupt file
-	os.WriteFile(filepath.Join(sessDir, "corrupt.json"), []byte("{invalid"), 0o644)
+	if err := os.WriteFile(filepath.Join(sessDir, "corrupt.json"), []byte("{invalid"), 0o644); err != nil {
+		t.Fatalf("failed to write corrupt file: %v", err)
+	}
 
 	sessions, err := ListSessions()
 	if err != nil {
@@ -256,7 +272,9 @@ func TestSetMessages_SummaryTruncation(t *testing.T) {
 func TestToolInputRoundTrip_StringFallback(t *testing.T) {
 	// Test that a string ToolInput (from consumeStream fallback) survives JSON round-trip
 	dir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir) // Unix
+	t.Setenv("APPDATA", dir)         // Windows
+	t.Setenv("HOME", dir)            // macOS fallback
 
 	s := New("/project")
 	s.SetMessages([]provider.Message{
