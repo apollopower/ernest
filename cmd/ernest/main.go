@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -66,20 +67,46 @@ func main() {
 		claudeCfg = &config.ClaudeConfig{}
 	}
 
-	// Build providers
+	// Load credentials (machine-wide API keys)
+	creds, err := config.LoadCredentials()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to load credentials: %v\n", err)
+		creds = &config.Credentials{}
+	}
+
+	// Build providers from config + credentials
 	var providers []provider.Provider
 	for _, pc := range cfg.Providers {
-		apiKey := pc.ResolveAPIKey()
-		switch pc.Name {
-		case "anthropic":
+		apiKey := pc.ResolveAPIKeyWithCredentials(creds)
+		// Allow empty API key for local providers (e.g., Ollama) with a base_url
+		if apiKey == "" && pc.BaseURL == "" {
+			continue // skip unconfigured providers without a local endpoint
+		}
+		name := strings.ToLower(pc.Name)
+		switch {
+		case name == "anthropic":
 			providers = append(providers, provider.NewAnthropic(apiKey, pc.Model))
+		default:
+			// OpenAI-compatible provider (OpenAI, SiliconFlow, Together, Ollama, etc.)
+			providers = append(providers, provider.NewOpenAICompat(pc.Name, apiKey, pc.Model, pc.BaseURL))
 		}
 	}
 	if len(providers) == 0 {
+		// Fallback: try default Anthropic from env var or credentials
 		defaultCfg := config.DefaultConfig().Providers[0]
-		providers = append(providers, provider.NewAnthropic(
-			defaultCfg.ResolveAPIKey(), defaultCfg.Model,
-		))
+		apiKey := defaultCfg.ResolveAPIKeyWithCredentials(creds)
+		if apiKey != "" {
+			providers = append(providers, provider.NewAnthropic(apiKey, defaultCfg.Model))
+		}
+	}
+
+	// First-launch experience: no providers configured
+	if len(providers) == 0 && !isHeadless {
+		// TUI will show the message — provider list is empty but we can still launch
+		log.Println("[main] no providers configured")
+	} else if len(providers) == 0 && isHeadless {
+		fmt.Fprintf(os.Stderr, "error: no providers configured. Set ANTHROPIC_API_KEY (or another provider key), or edit ~/.config/ernest/credentials.yaml\n")
+		os.Exit(1)
 	}
 
 	// Redirect log output to a file so it doesn't corrupt TUI/headless output
