@@ -186,15 +186,16 @@ func TestAgent_ContextCancellation(t *testing.T) {
 
 // mockTool implements tools.Tool for testing.
 type mockTool struct {
-	name   string
-	result string
-	err    error
+	name                 string
+	result               string
+	err                  error
+	requiresConfirmation bool
 }
 
 func (t *mockTool) Name() string                                                  { return t.name }
 func (t *mockTool) Description() string                                           { return "mock" }
 func (t *mockTool) InputSchema() map[string]any                                   { return map[string]any{"type": "object"} }
-func (t *mockTool) RequiresConfirmation(_ json.RawMessage) bool                   { return false }
+func (t *mockTool) RequiresConfirmation(_ json.RawMessage) bool                   { return t.requiresConfirmation }
 func (t *mockTool) Execute(_ context.Context, _ json.RawMessage) (string, error)  { return t.result, t.err }
 
 func TestAgent_ToolCallAndExecution(t *testing.T) {
@@ -405,5 +406,339 @@ func TestAgent_MultipleToolCalls(t *testing.T) {
 
 	if toolCallCount != 2 {
 		t.Errorf("expected 2 tool calls, got %d", toolCallCount)
+	}
+}
+
+func TestAgent_ToolConfirmation_Approved(t *testing.T) {
+	mp := &multiTurnProvider{
+		name: "test",
+		turns: [][]provider.StreamEvent{
+			{
+				{Type: "tool_use_start", ToolUseID: "call_1", ToolName: "bash"},
+				{Type: "tool_input_delta", ToolInput: `{"command": "echo hi"}`},
+				{Type: "content_block_stop"},
+				{Type: "message_delta", StopReason: "tool_use"},
+				{Type: "done"},
+			},
+			{
+				{Type: "text_delta", Text: "Command executed."},
+				{Type: "done"},
+			},
+		},
+	}
+
+	registry := tools.NewRegistry(&mockTool{
+		name:                 "bash",
+		result:               "hi",
+		requiresConfirmation: true,
+	})
+	router := provider.NewRouter([]provider.Provider{mp}, 30*time.Second)
+	a := New(router, registry, &config.ClaudeConfig{})
+
+	events := a.Run(context.Background(), "Run echo hi")
+
+	var gotConfirm, gotResult, gotDone bool
+	for evt := range events {
+		switch evt.Type {
+		case "tool_confirm":
+			gotConfirm = true
+			// Simulate user pressing "y"
+			go a.ResolveTool(evt.ToolUseID, true)
+		case "tool_result":
+			gotResult = true
+			if evt.ToolResult != "hi" {
+				t.Errorf("expected result 'hi', got %q", evt.ToolResult)
+			}
+		case "done":
+			gotDone = true
+		}
+	}
+
+	if !gotConfirm {
+		t.Error("missing tool_confirm event")
+	}
+	if !gotResult {
+		t.Error("missing tool_result event")
+	}
+	if !gotDone {
+		t.Error("missing done event")
+	}
+}
+
+func TestAgent_ToolConfirmation_Denied(t *testing.T) {
+	mp := &multiTurnProvider{
+		name: "test",
+		turns: [][]provider.StreamEvent{
+			{
+				{Type: "tool_use_start", ToolUseID: "call_1", ToolName: "bash"},
+				{Type: "tool_input_delta", ToolInput: `{"command": "rm -rf /"}`},
+				{Type: "content_block_stop"},
+				{Type: "message_delta", StopReason: "tool_use"},
+				{Type: "done"},
+			},
+			{
+				{Type: "text_delta", Text: "Understood, I won't do that."},
+				{Type: "done"},
+			},
+		},
+	}
+
+	registry := tools.NewRegistry(&mockTool{
+		name:                 "bash",
+		result:               "should not execute",
+		requiresConfirmation: true,
+	})
+	router := provider.NewRouter([]provider.Provider{mp}, 30*time.Second)
+	a := New(router, registry, &config.ClaudeConfig{})
+
+	events := a.Run(context.Background(), "Delete everything")
+
+	var gotConfirm, gotResult bool
+	for evt := range events {
+		switch evt.Type {
+		case "tool_confirm":
+			gotConfirm = true
+			go a.ResolveTool(evt.ToolUseID, false)
+		case "tool_result":
+			gotResult = true
+			if evt.ToolResult != "error: tool use denied by user" {
+				t.Errorf("expected denial error, got %q", evt.ToolResult)
+			}
+		}
+	}
+
+	if !gotConfirm {
+		t.Error("missing tool_confirm event")
+	}
+	if !gotResult {
+		t.Error("missing tool_result event (with denial error)")
+	}
+}
+
+func TestAgent_ToolPermission_AutoAllowed(t *testing.T) {
+	mp := &multiTurnProvider{
+		name: "test",
+		turns: [][]provider.StreamEvent{
+			{
+				{Type: "tool_use_start", ToolUseID: "call_1", ToolName: "bash"},
+				{Type: "tool_input_delta", ToolInput: `{"command": "echo ok"}`},
+				{Type: "content_block_stop"},
+				{Type: "message_delta", StopReason: "tool_use"},
+				{Type: "done"},
+			},
+			{
+				{Type: "text_delta", Text: "Done."},
+				{Type: "done"},
+			},
+		},
+	}
+
+	registry := tools.NewRegistry(&mockTool{
+		name:                 "bash",
+		result:               "ok",
+		requiresConfirmation: true,
+	})
+	router := provider.NewRouter([]provider.Provider{mp}, 30*time.Second)
+	// bash is in allowedTools — should skip confirmation
+	a := New(router, registry, &config.ClaudeConfig{AllowedTools: []string{"bash"}})
+
+	var gotConfirm bool
+	var gotResult bool
+	for evt := range a.Run(context.Background(), "Run echo ok") {
+		if evt.Type == "tool_confirm" {
+			gotConfirm = true
+		}
+		if evt.Type == "tool_result" {
+			gotResult = true
+			if evt.ToolResult != "ok" {
+				t.Errorf("expected 'ok', got %q", evt.ToolResult)
+			}
+		}
+	}
+
+	if gotConfirm {
+		t.Error("should NOT get tool_confirm when tool is in allowedTools")
+	}
+	if !gotResult {
+		t.Error("missing tool_result event")
+	}
+}
+
+func TestAgent_ToolPermission_Denied(t *testing.T) {
+	mp := &multiTurnProvider{
+		name: "test",
+		turns: [][]provider.StreamEvent{
+			{
+				{Type: "tool_use_start", ToolUseID: "call_1", ToolName: "bash"},
+				{Type: "tool_input_delta", ToolInput: `{}`},
+				{Type: "content_block_stop"},
+				{Type: "message_delta", StopReason: "tool_use"},
+				{Type: "done"},
+			},
+			{
+				{Type: "text_delta", Text: "That tool is denied."},
+				{Type: "done"},
+			},
+		},
+	}
+
+	registry := tools.NewRegistry(&mockTool{
+		name:                 "bash",
+		result:               "should not execute",
+		requiresConfirmation: true,
+	})
+	router := provider.NewRouter([]provider.Provider{mp}, 30*time.Second)
+	// bash is in deniedTools — should auto-deny without confirmation
+	a := New(router, registry, &config.ClaudeConfig{DeniedTools: []string{"bash"}})
+
+	var gotConfirm bool
+	var gotResult bool
+	for evt := range a.Run(context.Background(), "Run bash") {
+		if evt.Type == "tool_confirm" {
+			gotConfirm = true
+		}
+		if evt.Type == "tool_result" {
+			gotResult = true
+			if evt.ToolResult != "error: tool bash is denied by settings" {
+				t.Errorf("expected denied error, got %q", evt.ToolResult)
+			}
+		}
+	}
+
+	if gotConfirm {
+		t.Error("should NOT get tool_confirm when tool is denied")
+	}
+	if !gotResult {
+		t.Error("missing tool_result event (with denied error)")
+	}
+}
+
+func TestAgent_AllowToolAlways(t *testing.T) {
+	// Two turns: first call requires confirmation (user presses "always"),
+	// second call should skip confirmation because the tool is now allowed.
+	mp := &multiTurnProvider{
+		name: "test",
+		turns: [][]provider.StreamEvent{
+			// Turn 1: tool call
+			{
+				{Type: "tool_use_start", ToolUseID: "call_1", ToolName: "bash"},
+				{Type: "tool_input_delta", ToolInput: `{"command": "echo first"}`},
+				{Type: "content_block_stop"},
+				{Type: "message_delta", StopReason: "tool_use"},
+				{Type: "done"},
+			},
+			// Turn 1 response
+			{
+				{Type: "text_delta", Text: "First done."},
+				{Type: "done"},
+			},
+		},
+	}
+
+	dir := t.TempDir()
+	registry := tools.NewRegistry(&mockTool{
+		name:                 "bash",
+		result:               "output",
+		requiresConfirmation: true,
+	})
+	router := provider.NewRouter([]provider.Provider{mp}, 30*time.Second)
+	a := New(router, registry, &config.ClaudeConfig{ProjectDir: dir})
+
+	// First run: should get confirmation, use AllowToolAlways
+	var gotConfirm bool
+	for evt := range a.Run(context.Background(), "Run echo first") {
+		if evt.Type == "tool_confirm" {
+			gotConfirm = true
+			go func() {
+				a.AllowToolAlways(evt.ToolUseID, evt.ToolName)
+			}()
+		}
+	}
+	if !gotConfirm {
+		t.Fatal("expected tool_confirm on first call")
+	}
+
+	// Verify in-memory permission updated
+	if a.permissions.Check("bash") != PermissionAllowed {
+		t.Error("expected bash to be allowed in-memory after AllowToolAlways")
+	}
+
+	// Reset provider for second run
+	mp.call = 0
+	mp.turns = [][]provider.StreamEvent{
+		{
+			{Type: "tool_use_start", ToolUseID: "call_2", ToolName: "bash"},
+			{Type: "tool_input_delta", ToolInput: `{"command": "echo second"}`},
+			{Type: "content_block_stop"},
+			{Type: "message_delta", StopReason: "tool_use"},
+			{Type: "done"},
+		},
+		{
+			{Type: "text_delta", Text: "Second done."},
+			{Type: "done"},
+		},
+	}
+
+	// Second run: should NOT get confirmation
+	gotConfirm = false
+	for evt := range a.Run(context.Background(), "Run echo second") {
+		if evt.Type == "tool_confirm" {
+			gotConfirm = true
+		}
+	}
+	if gotConfirm {
+		t.Error("should NOT get tool_confirm after AllowToolAlways")
+	}
+}
+
+func TestExtractToolCalls_NilInput(t *testing.T) {
+	msg := provider.Message{
+		Role: provider.RoleAssistant,
+		Content: []provider.ContentBlock{
+			{Type: "tool_use", ToolUseID: "c1", ToolName: "test", ToolInput: nil},
+		},
+	}
+	calls := extractToolCalls(msg)
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 call, got %d", len(calls))
+	}
+	if calls[0].ToolInput != "{}" {
+		t.Errorf("expected '{}' for nil input, got %q", calls[0].ToolInput)
+	}
+}
+
+func TestExtractToolCalls_StringInput(t *testing.T) {
+	// Simulates the fallback path where consumeStream stores raw JSON string
+	// on parse failure
+	msg := provider.Message{
+		Role: provider.RoleAssistant,
+		Content: []provider.ContentBlock{
+			{Type: "tool_use", ToolUseID: "c1", ToolName: "test", ToolInput: `{"key": "value"}`},
+		},
+	}
+	calls := extractToolCalls(msg)
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 call, got %d", len(calls))
+	}
+	// Should use string directly, not double-encode
+	if calls[0].ToolInput != `{"key": "value"}` {
+		t.Errorf("expected raw JSON string, got %q", calls[0].ToolInput)
+	}
+}
+
+func TestExtractToolCalls_MapInput(t *testing.T) {
+	// Normal path: consumeStream unmarshals into map[string]any
+	msg := provider.Message{
+		Role: provider.RoleAssistant,
+		Content: []provider.ContentBlock{
+			{Type: "tool_use", ToolUseID: "c1", ToolName: "test", ToolInput: map[string]any{"file_path": "/tmp/x"}},
+		},
+	}
+	calls := extractToolCalls(msg)
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 call, got %d", len(calls))
+	}
+	if calls[0].ToolInput != `{"file_path":"/tmp/x"}` {
+		t.Errorf("expected marshaled JSON, got %q", calls[0].ToolInput)
 	}
 }

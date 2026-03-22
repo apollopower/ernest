@@ -58,10 +58,13 @@ func main() {
 		defer logFile.Close()
 	}
 
-	// Register read-only tools only. Write tools (write_file, str_replace, bash)
-	// are deferred to Phase 3 when the confirmation dialog gates them.
+	// Register all tools. Write tools (write_file, str_replace, bash) require
+	// confirmation via the TUI dialog before execution.
 	registry := tools.NewRegistry(
 		&tools.ReadFileTool{},
+		&tools.WriteFileTool{},
+		&tools.StrReplaceTool{},
+		&tools.BashTool{},
 		&tools.GlobTool{},
 		&tools.GrepTool{},
 	)

@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +14,7 @@ type ClaudeConfig struct {
 	AllowedTools   []string
 	DeniedTools    []string
 	PermissionMode string
+	ProjectDir     string // stored for writing back to settings.local.json
 }
 
 // LoadClaudeConfig reads the .claude/ directory structure and assembles
@@ -26,7 +28,7 @@ type ClaudeConfig struct {
 //  5. .claude/rules/*.md            (project rules)
 //  6. CLAUDE.md in repo root        (legacy location)
 func LoadClaudeConfig(projectDir string) (*ClaudeConfig, error) {
-	cfg := &ClaudeConfig{}
+	cfg := &ClaudeConfig{ProjectDir: projectDir}
 	home, _ := os.UserHomeDir()
 	var promptParts []string
 
@@ -60,10 +62,13 @@ func LoadClaudeConfig(projectDir string) (*ClaudeConfig, error) {
 
 	cfg.SystemPrompt = strings.Join(promptParts, "\n\n---\n\n")
 
-	// Load settings.json for tool permissions
+	// Load settings for tool permissions.
+	// Resolution order: user-global → project shared → project local.
+	// Later entries append to AllowedTools/DeniedTools and override PermissionMode.
 	for _, settingsPath := range []string{
 		filepath.Join(home, ".claude", "settings.json"),
 		filepath.Join(projectDir, ".claude", "settings.json"),
+		filepath.Join(projectDir, ".claude", "settings.local.json"),
 	} {
 		if data, err := os.ReadFile(settingsPath); err == nil {
 			var settings struct {
@@ -88,4 +93,51 @@ func LoadClaudeConfig(projectDir string) (*ClaudeConfig, error) {
 	}
 
 	return cfg, nil
+}
+
+// SaveAllowedTool adds a tool name to the project-local settings file
+// (.claude/settings.local.json). Creates the file if it doesn't exist.
+func SaveAllowedTool(projectDir, toolName string) error {
+	path := filepath.Join(projectDir, ".claude", "settings.local.json")
+
+	// Read existing settings. Only start fresh if the file doesn't exist;
+	// other read errors (permissions, I/O) are propagated.
+	var settings map[string]any
+	if data, err := os.ReadFile(path); err == nil {
+		if err := json.Unmarshal(data, &settings); err != nil {
+			return fmt.Errorf("cannot parse existing settings file %s: %w", path, err)
+		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("cannot read %s: %w", path, err)
+	}
+	if settings == nil {
+		settings = make(map[string]any)
+	}
+
+	// Get or create allowedTools list
+	var allowed []string
+	if existing, ok := settings["allowedTools"].([]any); ok {
+		for _, v := range existing {
+			if s, ok := v.(string); ok {
+				if s == toolName {
+					return nil // already present
+				}
+				allowed = append(allowed, s)
+			}
+		}
+	}
+	allowed = append(allowed, toolName)
+	settings["allowedTools"] = allowed
+
+	// Ensure .claude directory exists
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("cannot create .claude directory: %w", err)
+	}
+
+	data, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return fmt.Errorf("cannot marshal settings: %w", err)
+	}
+
+	return os.WriteFile(path, data, 0o644)
 }
