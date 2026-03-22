@@ -95,8 +95,8 @@ func (m StatusModel) View() string {
 
 // tokenStyle returns the appropriate style based on token usage percentage.
 func (m StatusModel) tokenStyle() lipgloss.Style {
-	if m.maxTokens <= 0 || m.tokens <= 0 {
-		return statusBarStyle // default, no color coding
+	if m.maxTokens <= 0 {
+		return statusBarStyle // no color coding when maxTokens is not set
 	}
 
 	pct := m.tokens * 100 / m.maxTokens

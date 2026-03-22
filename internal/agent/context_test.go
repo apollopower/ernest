@@ -108,7 +108,7 @@ func TestNeedsCompaction(t *testing.T) {
 	// With low maxContextTokens and some history, should need compaction
 	a := New(router, nil, &config.ClaudeConfig{}, 100) // very low limit
 
-	// Add messages that exceed 80% of 100 tokens
+	// Add messages that exceed 90% of 100 tokens (the compaction threshold)
 	a.mu.Lock()
 	for i := 0; i < 10; i++ {
 		a.history = append(a.history, provider.Message{
@@ -208,9 +208,13 @@ func TestCompact_TooShort(t *testing.T) {
 	})
 	a.mu.Unlock()
 
-	_, _, err := a.Compact(context.Background())
-	if err == nil {
-		t.Error("expected error for too-short conversation")
+	before, after, err := a.Compact(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Should be a no-op (before == after)
+	if before != after {
+		t.Errorf("expected no-op (before == after), got %d != %d", before, after)
 	}
 }
 

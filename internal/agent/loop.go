@@ -112,7 +112,7 @@ func (a *Agent) Compact(ctx context.Context) (before int, after int, err error) 
 	before = EstimateTokens(history)
 
 	if len(history) < 2 {
-		return before, before, fmt.Errorf("conversation too short to compact")
+		return before, before, nil // too short, no-op
 	}
 
 	// Preserve the last exchange (last 2 messages). If there are 4+ messages,
@@ -138,7 +138,7 @@ func (a *Agent) Compact(ctx context.Context) (before int, after int, err error) 
 	// being summarized (preserved == nil), as the user explicitly asked or
 	// a single long response is consuming context.
 	if preserved != nil && len(toSummarize) < 3 {
-		return before, before, fmt.Errorf("not enough conversation history to benefit from compaction")
+		return before, before, nil // not enough to benefit, no-op
 	}
 
 	// Ask the model to summarize the older portion

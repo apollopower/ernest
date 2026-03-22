@@ -135,11 +135,21 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case CompactionDoneMsg:
 		m.compacting = false
+		if m.cancelStream != nil {
+			m.cancelStream()
+			m.cancelStream = nil
+		}
 		if msg.Err != nil {
 			m.chat.AddSystemMessage("Compaction failed: " + msg.Err.Error())
+		} else if msg.Before == msg.After {
+			m.chat.AddSystemMessage("Nothing to compact.")
 		} else {
 			m.chat.AddSystemMessage(fmt.Sprintf("Compacted: %d → %d tokens", msg.Before, msg.After))
-			m.statusBar, _ = m.statusBar.Update(StatusUpdateMsg{Tokens: msg.After})
+			// Use EstimateCurrentTokens for consistent display (includes system prompt)
+			if m.agent != nil {
+				tokens := m.agent.EstimateCurrentTokens()
+				m.statusBar, _ = m.statusBar.Update(StatusUpdateMsg{Tokens: tokens})
+			}
 		}
 		return m, nil
 
@@ -456,11 +466,14 @@ func isKnownCommand(name string) bool {
 }
 
 // runCompaction returns a tea.Cmd that runs compaction in a goroutine
-// and sends a CompactionDoneMsg when complete.
+// and sends a CompactionDoneMsg when complete. Uses cancelStream context
+// so Ctrl+C can abort compaction.
 func (m *AppModel) runCompaction() tea.Cmd {
 	a := m.agent
+	ctx, cancel := context.WithCancel(context.Background())
+	m.cancelStream = cancel
 	return func() tea.Msg {
-		before, after, err := a.Compact(context.Background())
+		before, after, err := a.Compact(ctx)
 		return CompactionDoneMsg{Before: before, After: after, Err: err}
 	}
 }
