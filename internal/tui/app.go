@@ -176,7 +176,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ToolAlwaysMsg:
 		m.confirming = false
 		m.confirmDialog = nil
-		if err := m.agent.AllowToolAlways(msg.ToolUseID, msg.ToolName); err != nil {
+		if err := m.agent.AllowToolAlways(msg.ToolUseID, msg.ToolName, msg.ToolInput); err != nil {
 			log.Printf("[tui] warning: failed to save tool permission: %v", err)
 		}
 		return m, waitForAgentEvent(m.agentCh)

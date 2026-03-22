@@ -19,6 +19,7 @@ type ToolDenyMsg struct{ ToolUseID string }
 type ToolAlwaysMsg struct {
 	ToolUseID string
 	ToolName  string
+	ToolInput string
 }
 
 // ToolConfirmModel renders a modal confirmation dialog for tool use.
@@ -53,7 +54,8 @@ func (m ToolConfirmModel) Update(msg tea.Msg) (ToolConfirmModel, tea.Cmd) {
 		case "a":
 			name := m.toolName
 			id := m.toolUseID
-			return m, func() tea.Msg { return ToolAlwaysMsg{ToolUseID: id, ToolName: name} }
+			input := m.toolInput
+			return m, func() tea.Msg { return ToolAlwaysMsg{ToolUseID: id, ToolName: name, ToolInput: input} }
 		}
 	}
 	return m, nil
