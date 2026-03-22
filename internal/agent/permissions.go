@@ -133,8 +133,6 @@ func (p *PermissionChecker) Allow(entry string) {
 }
 
 // PermissionKey builds the permission entry string for a tool invocation.
-// For bash: "bash(command)". For other tools: just the tool name.
-// PermissionKey builds the permission entry string for a tool invocation.
 // For bash: "bash(command)". Returns empty string if the command can't be
 // extracted — callers should skip persisting in that case to avoid saving
 // an overly broad "bash" allow-all entry.
