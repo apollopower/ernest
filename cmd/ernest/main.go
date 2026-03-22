@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -77,17 +78,16 @@ func main() {
 	var providers []provider.Provider
 	for _, pc := range cfg.Providers {
 		apiKey := pc.ResolveAPIKeyWithCredentials(creds)
-		if apiKey == "" {
-			continue // skip unconfigured providers
+		// Allow empty API key for local providers (e.g., Ollama) with a base_url
+		if apiKey == "" && pc.BaseURL == "" {
+			continue // skip unconfigured providers without a local endpoint
 		}
+		name := strings.ToLower(pc.Name)
 		switch {
-		case pc.Name == "anthropic":
+		case name == "anthropic":
 			providers = append(providers, provider.NewAnthropic(apiKey, pc.Model))
-		case pc.BaseURL != "" || pc.Name == "openai" || pc.Name == "siliconflow":
-			// OpenAI-compatible provider (OpenAI, SiliconFlow, Together, Ollama, etc.)
-			providers = append(providers, provider.NewOpenAICompat(pc.Name, apiKey, pc.Model, pc.BaseURL))
 		default:
-			// Unknown provider type with no base_url — try OpenAI-compatible as default
+			// OpenAI-compatible provider (OpenAI, SiliconFlow, Together, Ollama, etc.)
 			providers = append(providers, provider.NewOpenAICompat(pc.Name, apiKey, pc.Model, pc.BaseURL))
 		}
 	}
@@ -105,7 +105,7 @@ func main() {
 		// TUI will show the message — provider list is empty but we can still launch
 		log.Println("[main] no providers configured")
 	} else if len(providers) == 0 && isHeadless {
-		fmt.Fprintf(os.Stderr, "error: no providers configured. Set ANTHROPIC_API_KEY or edit ~/.config/ernest/credentials.yaml\n")
+		fmt.Fprintf(os.Stderr, "error: no providers configured. Set ANTHROPIC_API_KEY (or another provider key), or edit ~/.config/ernest/credentials.yaml\n")
 		os.Exit(1)
 	}
 

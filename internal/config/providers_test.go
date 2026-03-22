@@ -83,19 +83,30 @@ func TestResolveAPIKeyWithCredentials_NilCredentials(t *testing.T) {
 }
 
 func TestResolveAPIKeyWithCredentials_CustomProviderNoEnvVar(t *testing.T) {
-	// Custom provider names don't get automatic env var lookup
-	t.Setenv("SILICONFLOW_API_KEY", "should-not-match")
+	// Custom provider names (not in knownEnvVars) don't get automatic env var lookup
+	t.Setenv("MYCUSTOM_API_KEY", "should-not-match")
 
-	pc := ProviderConfig{Name: "siliconflow", Model: "test"}
+	pc := ProviderConfig{Name: "mycustom", Model: "test"}
 	creds := &Credentials{
 		Providers: []ProviderCredential{
-			{Name: "siliconflow", APIKey: "cred-key"},
+			{Name: "mycustom", APIKey: "cred-key"},
 		},
 	}
 
 	key := pc.ResolveAPIKeyWithCredentials(creds)
-	// Should get credentials key, not env var (siliconflow is not in knownEnvVars)
+	// Should get credentials key, not env var (mycustom is not in knownEnvVars)
 	if key != "cred-key" {
 		t.Errorf("expected credentials key for custom provider, got %q", key)
+	}
+}
+
+func TestResolveAPIKeyWithCredentials_SiliconFlowEnvVar(t *testing.T) {
+	// SiliconFlow is a known provider — env var should work
+	t.Setenv("SILICONFLOW_API_KEY", "sf-env-key")
+
+	pc := ProviderConfig{Name: "siliconflow", Model: "test"}
+	key := pc.ResolveAPIKeyWithCredentials(nil)
+	if key != "sf-env-key" {
+		t.Errorf("expected SiliconFlow env var key, got %q", key)
 	}
 }

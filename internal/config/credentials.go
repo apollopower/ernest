@@ -100,23 +100,27 @@ func (c *Credentials) GetKey(providerName string) string {
 }
 
 // SetKey sets or updates the API key for a provider.
+// Name is stored lowercase for consistency.
 func (c *Credentials) SetKey(providerName, apiKey string) {
+	name := strings.ToLower(providerName)
 	for i, p := range c.Providers {
-		if p.Name == providerName {
+		if strings.ToLower(p.Name) == name {
 			c.Providers[i].APIKey = apiKey
 			return
 		}
 	}
 	c.Providers = append(c.Providers, ProviderCredential{
-		Name:   providerName,
+		Name:   name,
 		APIKey: apiKey,
 	})
 }
 
 // Remove deletes a provider's credentials.
+// Case-insensitive lookup.
 func (c *Credentials) Remove(providerName string) {
+	name := strings.ToLower(providerName)
 	for i, p := range c.Providers {
-		if p.Name == providerName {
+		if strings.ToLower(p.Name) == name {
 			c.Providers = append(c.Providers[:i], c.Providers[i+1:]...)
 			return
 		}

@@ -8,10 +8,14 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 )
 
-const defaultOpenAIBaseURL = "https://api.openai.com/v1"
+const (
+	defaultOpenAIBaseURL     = "https://api.openai.com/v1"
+	openAIMaxScannerBuffer   = 1 << 20 // 1MB
+)
 
 // OpenAICompat implements the Provider interface for any OpenAI Chat Completions-compatible API.
 // Covers: OpenAI, SiliconFlow, Together, Ollama, Groq, and any API that speaks
@@ -43,9 +47,6 @@ func (o *OpenAICompat) Name() string  { return o.name }
 func (o *OpenAICompat) Healthy() bool { return true }
 
 func (o *OpenAICompat) Stream(ctx context.Context, systemPrompt string, messages []Message, tools []ToolDef) (<-chan StreamEvent, error) {
-	if o.apiKey == "" {
-		return nil, fmt.Errorf("%s API key not set", o.name)
-	}
 
 	body, err := o.buildRequestBody(systemPrompt, messages, tools)
 	if err != nil {
@@ -59,7 +60,9 @@ func (o *OpenAICompat) Stream(ctx context.Context, systemPrompt string, messages
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+o.apiKey)
+	if o.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+o.apiKey)
+	}
 
 	resp, err := o.client.Do(req)
 	if err != nil {
@@ -125,7 +128,7 @@ func (o *OpenAICompat) parseSSE(ctx context.Context, body io.ReadCloser, ch chan
 	defer body.Close()
 
 	scanner := bufio.NewScanner(body)
-	scanner.Buffer(make([]byte, 0, maxScannerBuffer), maxScannerBuffer)
+	scanner.Buffer(make([]byte, 0, openAIMaxScannerBuffer), openAIMaxScannerBuffer)
 
 	// Tool call accumulation: OpenAI streams tool calls with index-based multiplexing
 	pendingTools := make(map[int]*pendingToolCall)
@@ -214,10 +217,20 @@ func (o *OpenAICompat) parseSSE(ctx context.Context, body io.ReadCloser, ch chan
 
 // flushPendingTools emits accumulated tool calls as StreamEvents.
 func (o *OpenAICompat) flushPendingTools(pending map[int]*pendingToolCall, ch chan<- StreamEvent) {
-	hadTools := false
-	for idx, tc := range pending {
+	if len(pending) == 0 {
+		return
+	}
+
+	// Sort by index for deterministic tool call ordering
+	indices := make([]int, 0, len(pending))
+	for idx := range pending {
+		indices = append(indices, idx)
+	}
+	sort.Ints(indices)
+
+	for _, idx := range indices {
+		tc := pending[idx]
 		if tc.name != "" {
-			hadTools = true
 			ch <- StreamEvent{
 				Type:      "tool_use_start",
 				ToolUseID: tc.id,
@@ -233,9 +246,8 @@ func (o *OpenAICompat) flushPendingTools(pending map[int]*pendingToolCall, ch ch
 		}
 		delete(pending, idx)
 	}
-	if hadTools {
-		ch <- StreamEvent{Type: "message_delta", StopReason: "tool_use"}
-	}
+
+	ch <- StreamEvent{Type: "message_delta", StopReason: "tool_use"}
 }
 
 type pendingToolCall struct {

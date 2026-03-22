@@ -8,9 +8,10 @@ import (
 // knownEnvVars maps known provider names to their conventional env var names.
 // Custom provider names do NOT get automatic env var lookup.
 var knownEnvVars = map[string]string{
-	"anthropic": "ANTHROPIC_API_KEY",
-	"openai":    "OPENAI_API_KEY",
-	"gemini":    "GEMINI_API_KEY",
+	"anthropic":   "ANTHROPIC_API_KEY",
+	"openai":      "OPENAI_API_KEY",
+	"gemini":      "GEMINI_API_KEY",
+	"siliconflow": "SILICONFLOW_API_KEY",
 }
 
 // ResolveAPIKey returns the API key from the environment variable specified
