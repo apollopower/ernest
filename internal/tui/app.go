@@ -192,7 +192,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		// Ctrl+C always takes priority — even during confirmation dialog
 		if msg.Type == tea.KeyCtrlC {
-			if m.streaming {
+			if m.streaming || m.compacting {
 				if m.cancelStream != nil {
 					m.cancelStream()
 					m.cancelStream = nil
@@ -205,6 +205,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.chat.FinalizeMessage()
 				m.streaming = false
+				m.compacting = false
 				m.confirming = false
 				m.confirmDialog = nil
 				return m, nil
@@ -321,8 +322,8 @@ func (m AppModel) handleAgentEvent(evt agent.AgentEvent) (tea.Model, tea.Cmd) {
 				Tokens:    tokens,
 				MaxTokens: maxTokens,
 			})
-			// Auto-compact if needed
-			if m.agent.NeedsCompaction() {
+			// Auto-compact if needed (reuse computed tokens to avoid re-estimating)
+			if maxTokens > 0 && tokens > (maxTokens*90/100) {
 				m.compacting = true
 				m.chat.AddSystemMessage("Auto-compacting conversation...")
 				return m, m.runCompaction()

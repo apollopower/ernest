@@ -62,10 +62,10 @@ func (m StatusModel) Update(msg tea.Msg) (StatusModel, tea.Cmd) {
 		if msg.Model != "" {
 			m.model = msg.Model
 		}
-		if msg.Tokens > 0 {
+		if msg.Tokens >= 0 {
 			m.tokens = msg.Tokens
 		}
-		if msg.MaxTokens > 0 {
+		if msg.MaxTokens >= 0 {
 			m.maxTokens = msg.MaxTokens
 		}
 	}
@@ -80,7 +80,12 @@ func (m StatusModel) View() string {
 	provider := statusProviderStyle.Render(m.provider)
 
 	// Color-code token display based on usage percentage
-	tokenText := fmt.Sprintf(" %s │ tokens: %d/%d ", m.model, m.tokens, m.maxTokens)
+	var tokenText string
+	if m.maxTokens > 0 {
+		tokenText = fmt.Sprintf(" %s │ tokens: %d/%d ", m.model, m.tokens, m.maxTokens)
+	} else {
+		tokenText = fmt.Sprintf(" %s │ tokens: %d ", m.model, m.tokens)
+	}
 	tokenStyle := m.tokenStyle()
 	info := tokenStyle.Render(tokenText)
 
