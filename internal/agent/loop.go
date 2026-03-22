@@ -15,7 +15,7 @@ const maxToolLoops = 50
 
 // AgentEvent is what the TUI receives from the agent loop.
 type AgentEvent struct {
-	Type         string // "text", "usage", "tool_call", "tool_result", "provider_switch", "error", "done"
+	Type         string // "text", "usage", "tool_call", "tool_result", "tool_confirm", "provider_switch", "error", "done"
 	Text         string
 	ToolName     string
 	ToolInput    string
@@ -24,6 +24,12 @@ type AgentEvent struct {
 	ProviderName string
 	Error        error
 	Usage        *provider.Usage
+}
+
+// ToolDecision is the user's response to a tool confirmation prompt.
+type ToolDecision struct {
+	ToolUseID string
+	Approved  bool
 }
 
 // toolCall represents a parsed tool use request from the model response.
@@ -35,20 +41,43 @@ type toolCall struct {
 
 // Agent manages conversation history and dispatches prompts to providers.
 type Agent struct {
-	mu        sync.Mutex
-	router    *provider.Router
-	registry  *tools.Registry
-	claudeCfg *config.ClaudeConfig
-	history   []provider.Message
+	mu          sync.Mutex
+	router      *provider.Router
+	registry    *tools.Registry
+	permissions *PermissionChecker
+	claudeCfg   *config.ClaudeConfig
+	history     []provider.Message
+	confirmCh   chan ToolDecision // buffered(1), internal — use ResolveTool to send
 }
 
 // New creates an agent with the given router, tool registry, and claude config.
 func New(router *provider.Router, registry *tools.Registry, claudeCfg *config.ClaudeConfig) *Agent {
 	return &Agent{
-		router:    router,
-		registry:  registry,
-		claudeCfg: claudeCfg,
+		router:      router,
+		registry:    registry,
+		permissions: NewPermissionChecker(claudeCfg),
+		claudeCfg:   claudeCfg,
+		confirmCh:   make(chan ToolDecision, 1),
 	}
+}
+
+// ResolveTool sends a tool confirmation decision to the agent loop.
+// Called by the TUI when the user approves or denies a tool use.
+func (a *Agent) ResolveTool(toolUseID string, approved bool) {
+	a.confirmCh <- ToolDecision{ToolUseID: toolUseID, Approved: approved}
+}
+
+// AllowToolAlways approves the current tool call, adds the tool to the
+// in-memory allowed list, and persists the choice to .claude/settings.local.json.
+// Persistence happens before unblocking the agent to ensure the file is written
+// before the tool starts executing.
+func (a *Agent) AllowToolAlways(toolUseID, toolName string) error {
+	a.permissions.Allow(toolName)
+	if err := config.SaveAllowedTool(a.claudeCfg.ProjectDir, toolName); err != nil {
+		return err
+	}
+	a.confirmCh <- ToolDecision{ToolUseID: toolUseID, Approved: true}
+	return nil
 }
 
 // Run executes the full agent loop for a user prompt.
@@ -115,7 +144,7 @@ func (a *Agent) Run(ctx context.Context, userPrompt string) <-chan AgentEvent {
 				return
 			}
 
-			// Execute each tool call
+			// Execute each tool call (with permission checking and confirmation)
 			resultBlocks := make([]provider.ContentBlock, 0, len(calls))
 			for _, tc := range calls {
 				events <- AgentEvent{
@@ -125,7 +154,7 @@ func (a *Agent) Run(ctx context.Context, userPrompt string) <-chan AgentEvent {
 					ToolUseID: tc.ToolUseID,
 				}
 
-				result, execErr := a.executeTool(ctx, tc)
+				result, execErr := a.executeToolWithConfirmation(ctx, tc, events)
 
 				var resultContent string
 				isError := false
@@ -149,6 +178,11 @@ func (a *Agent) Run(ctx context.Context, userPrompt string) <-chan AgentEvent {
 					ToolResult: resultContent,
 					ToolUseID:  tc.ToolUseID,
 				}
+
+				// Stop if context was cancelled during tool execution/confirmation
+				if ctx.Err() != nil {
+					break
+				}
 			}
 
 			// Append tool results as a user message and loop
@@ -170,8 +204,9 @@ func (a *Agent) Run(ctx context.Context, userPrompt string) <-chan AgentEvent {
 	return events
 }
 
-// executeTool looks up and runs a tool from the registry.
-func (a *Agent) executeTool(ctx context.Context, tc toolCall) (string, error) {
+// executeToolWithConfirmation checks permissions, optionally requests user
+// confirmation, and executes the tool.
+func (a *Agent) executeToolWithConfirmation(ctx context.Context, tc toolCall, events chan<- AgentEvent) (string, error) {
 	if a.registry == nil {
 		return "", fmt.Errorf("unknown tool: %s", tc.ToolName)
 	}
@@ -179,6 +214,35 @@ func (a *Agent) executeTool(ctx context.Context, tc toolCall) (string, error) {
 	tool, ok := a.registry.Get(tc.ToolName)
 	if !ok {
 		return "", fmt.Errorf("unknown tool: %s", tc.ToolName)
+	}
+
+	// Check permissions
+	perm := a.permissions.Check(tc.ToolName)
+	if perm == PermissionDenied {
+		return "", fmt.Errorf("tool %s is denied by settings", tc.ToolName)
+	}
+
+	// If the tool requires confirmation and isn't auto-allowed, ask the user
+	if perm != PermissionAllowed && tool.RequiresConfirmation(json.RawMessage(tc.ToolInput)) {
+		events <- AgentEvent{
+			Type:      "tool_confirm",
+			ToolName:  tc.ToolName,
+			ToolInput: tc.ToolInput,
+			ToolUseID: tc.ToolUseID,
+		}
+
+		// Block until user responds or context is cancelled
+		select {
+		case decision := <-a.confirmCh:
+			if decision.ToolUseID != tc.ToolUseID {
+				return "", fmt.Errorf("stale tool decision (got %s, want %s)", decision.ToolUseID, tc.ToolUseID)
+			}
+			if !decision.Approved {
+				return "", fmt.Errorf("tool use denied by user")
+			}
+		case <-ctx.Done():
+			return "", fmt.Errorf("cancelled")
+		}
 	}
 
 	return tool.Execute(ctx, json.RawMessage(tc.ToolInput))
@@ -278,9 +342,11 @@ func extractToolCalls(msg provider.Message) []toolCall {
 	var calls []toolCall
 	for _, block := range msg.Content {
 		if block.Type == "tool_use" {
-			inputJSON, _ := json.Marshal(block.ToolInput)
+			var inputJSON []byte
 			if block.ToolInput == nil {
 				inputJSON = []byte("{}")
+			} else {
+				inputJSON, _ = json.Marshal(block.ToolInput)
 			}
 			calls = append(calls, toolCall{
 				ToolUseID: block.ToolUseID,

@@ -56,6 +56,21 @@ var (
 	toolContentStyle = lipgloss.NewStyle().
 				Foreground(muted)
 
+	// Tool confirmation dialog
+	toolConfirmTitleStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.AdaptiveColor{Light: "#D4A017", Dark: "#FFD700"}).
+				Bold(true)
+
+	toolConfirmNameStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.AdaptiveColor{Light: "#1a1a1a", Dark: "#FAFAFA"}).
+				Bold(true)
+
+	toolConfirmInputStyle = lipgloss.NewStyle().
+				Foreground(muted)
+
+	toolConfirmPromptStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.AdaptiveColor{Light: "#1a1a1a", Dark: "#DDDDDD"})
+
 	// Help text
 	helpStyle = lipgloss.NewStyle().
 			Foreground(muted)

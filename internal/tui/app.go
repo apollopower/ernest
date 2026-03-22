@@ -4,6 +4,7 @@ import (
 	"context"
 	"ernest/internal/agent"
 	"ernest/internal/config"
+	"log"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -17,19 +18,21 @@ type AgentEventMsg struct {
 type StreamDoneMsg struct{}
 
 type AppModel struct {
-	chat         ChatModel
-	input        InputModel
-	statusBar    StatusModel
-	agent        *agent.Agent
-	focused      bool   // true = input focused, false = vim nav mode
-	streaming    bool   // true while agent is streaming a response
-	pendingG     bool   // waiting for second 'g' in "gg" sequence
-	width        int
-	height       int
-	pendingCmd   string // for ":" command accumulation
-	cmdMode      bool   // in ":" command mode
-	cancelStream context.CancelFunc
-	agentCh      <-chan agent.AgentEvent
+	chat           ChatModel
+	input          InputModel
+	statusBar      StatusModel
+	agent          *agent.Agent
+	confirmDialog  *ToolConfirmModel
+	focused        bool   // true = input focused, false = vim nav mode
+	streaming      bool   // true while agent is streaming a response
+	confirming     bool   // true while tool confirmation dialog is visible
+	pendingG       bool   // waiting for second 'g' in "gg" sequence
+	width          int
+	height         int
+	pendingCmd     string // for ":" command accumulation
+	cmdMode        bool   // in ":" command mode
+	cancelStream   context.CancelFunc
+	agentCh        <-chan agent.AgentEvent
 }
 
 func NewAppModel(cfg config.Config, claudeCfg *config.ClaudeConfig, a *agent.Agent) AppModel {
@@ -71,8 +74,8 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case SubmitMsg:
-		if m.streaming {
-			return m, nil // ignore input while streaming
+		if m.streaming || m.confirming {
+			return m, nil // ignore input while streaming or confirming
 		}
 		if m.agent == nil {
 			m.chat.AddMessage("user", msg.Text)
@@ -93,6 +96,26 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case AgentEventMsg:
 		return m.handleAgentEvent(msg.Event)
 
+	case ToolApproveMsg:
+		m.confirming = false
+		m.confirmDialog = nil
+		m.agent.ResolveTool(msg.ToolUseID, true)
+		return m, waitForAgentEvent(m.agentCh)
+
+	case ToolDenyMsg:
+		m.confirming = false
+		m.confirmDialog = nil
+		m.agent.ResolveTool(msg.ToolUseID, false)
+		return m, waitForAgentEvent(m.agentCh)
+
+	case ToolAlwaysMsg:
+		m.confirming = false
+		m.confirmDialog = nil
+		if err := m.agent.AllowToolAlways(msg.ToolUseID, msg.ToolName); err != nil {
+			log.Printf("[tui] warning: failed to save tool permission: %v", err)
+		}
+		return m, waitForAgentEvent(m.agentCh)
+
 	case dotTickMsg:
 		var cmd tea.Cmd
 		m.chat, cmd = m.chat.Update(msg)
@@ -101,6 +124,8 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case StreamDoneMsg:
 		m.chat.FinalizeMessage()
 		m.streaming = false
+		m.confirming = false
+		m.confirmDialog = nil
 		if m.cancelStream != nil {
 			m.cancelStream()
 			m.cancelStream = nil
@@ -108,6 +133,15 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		// Confirmation dialog captures all keys
+		if m.confirming && m.confirmDialog != nil {
+			var cmd tea.Cmd
+			dialog := *m.confirmDialog
+			dialog, cmd = dialog.Update(msg)
+			m.confirmDialog = &dialog
+			return m, cmd
+		}
+
 		// Ctrl+C: cancel streaming or quit
 		if msg.Type == tea.KeyCtrlC {
 			if m.streaming {
@@ -115,8 +149,16 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.cancelStream()
 					m.cancelStream = nil
 				}
+				// Drain remaining events to prevent agent goroutine leak
+				if m.agentCh != nil {
+					ch := m.agentCh
+					go func() { for range ch {} }()
+					m.agentCh = nil
+				}
 				m.chat.FinalizeMessage()
 				m.streaming = false
+				m.confirming = false
+				m.confirmDialog = nil
 				return m, nil
 			}
 			return m, tea.Quit
@@ -177,6 +219,15 @@ func (m AppModel) handleAgentEvent(evt agent.AgentEvent) (tea.Model, tea.Cmd) {
 		m.chat.FinalizeOrRemoveEmpty()
 		m.chat.AddToolCall(evt.ToolName, evt.ToolInput)
 		return m, waitForAgentEvent(m.agentCh)
+
+	case "tool_confirm":
+		// Show confirmation dialog — agent loop is blocked waiting for ResolveTool
+		dialog := NewToolConfirmModel(evt.ToolName, evt.ToolInput, evt.ToolUseID, m.width)
+		m.confirmDialog = &dialog
+		m.confirming = true
+		// Don't read next agent event — the agent is blocked on confirmCh.
+		// The next read happens after ToolApproveMsg or ToolDenyMsg.
+		return m, nil
 
 	case "tool_result":
 		m.chat.AddToolResult(evt.ToolName, evt.ToolResult)
@@ -292,6 +343,14 @@ func (m *AppModel) layout() {
 func (m AppModel) View() string {
 	if m.width == 0 {
 		return "Starting Ernest..."
+	}
+
+	// Show confirmation dialog overlay when active
+	if m.confirming && m.confirmDialog != nil {
+		chatView := m.chat.View()
+		dialogView := m.confirmDialog.View()
+		statusView := m.statusBar.View()
+		return chatView + "\n" + dialogView + "\n" + statusView
 	}
 
 	help := ""
