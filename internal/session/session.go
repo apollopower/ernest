@@ -162,6 +162,24 @@ func ListSessions() ([]SessionInfo, error) {
 	return sessions, nil
 }
 
+// FindRecentSession returns the most recent session for the given project
+// directory that was updated within the last 24 hours. Returns nil if none found.
+func FindRecentSession(projectDir string) *SessionInfo {
+	sessions, err := ListSessions()
+	if err != nil {
+		return nil
+	}
+
+	cutoff := time.Now().Add(-24 * time.Hour)
+	for _, s := range sessions {
+		if s.ProjectDir == projectDir && s.UpdatedAt.After(cutoff) {
+			info := s
+			return &info
+		}
+	}
+	return nil
+}
+
 // SessionDir returns the directory where sessions are stored.
 func SessionDir() string {
 	configDir, err := os.UserConfigDir()

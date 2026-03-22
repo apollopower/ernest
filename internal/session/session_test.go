@@ -311,3 +311,58 @@ func TestToolInputRoundTrip_StringFallback(t *testing.T) {
 		t.Errorf("expected ToolInput string preserved, got %v", toolBlock.ToolInput)
 	}
 }
+
+func TestFindRecentSession(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir) // Unix
+	t.Setenv("APPDATA", dir)         // Windows
+	t.Setenv("HOME", dir)            // macOS fallback
+
+	// Create a session for project1
+	s := New("/project1")
+	s.SetMessages([]provider.Message{
+		{Role: provider.RoleUser, Content: []provider.ContentBlock{{Type: "text", Text: "Hello"}}},
+	})
+	if err := s.Save(); err != nil {
+		t.Fatalf("failed to save: %v", err)
+	}
+
+	// Should find it
+	found := FindRecentSession("/project1")
+	if found == nil {
+		t.Fatal("expected to find recent session")
+	}
+	if found.ID != s.ID {
+		t.Errorf("expected ID %s, got %s", s.ID, found.ID)
+	}
+
+	// Should not find for different project
+	found = FindRecentSession("/project2")
+	if found != nil {
+		t.Error("expected no session for different project")
+	}
+}
+
+func TestFindRecentSession_NoneExists(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("APPDATA", dir)
+	t.Setenv("HOME", dir)
+
+	found := FindRecentSession("/project")
+	if found != nil {
+		t.Error("expected nil when no sessions exist")
+	}
+}
+
+func TestLoad_NonexistentID(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("APPDATA", dir)
+	t.Setenv("HOME", dir)
+
+	_, err := Load(filepath.Join(SessionDir(), "nonexistent.json"))
+	if err == nil {
+		t.Error("expected error for nonexistent session")
+	}
+}

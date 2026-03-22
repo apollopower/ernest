@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"encoding/json"
+	"ernest/internal/provider"
 	"strings"
 	"time"
 
@@ -14,6 +16,69 @@ type ChatMessage struct {
 	Content   string
 	ToolName  string // for tool_call and tool_result messages
 	streaming bool   // true while message is being streamed
+}
+
+// MessagesToChat converts provider Messages (agent history) into ChatMessages
+// for displaying a resumed session in the TUI. Multi-block messages produce
+// multiple ChatMessages.
+func MessagesToChat(msgs []provider.Message) []ChatMessage {
+	var result []ChatMessage
+	// Track tool_use ID → name for labeling tool_result messages
+	toolNames := make(map[string]string)
+
+	for _, msg := range msgs {
+		for _, block := range msg.Content {
+			switch block.Type {
+			case "text":
+				role := "user"
+				if msg.Role == provider.RoleAssistant {
+					role = "assistant"
+				}
+				result = append(result, ChatMessage{Role: role, Content: block.Text})
+
+			case "tool_use":
+				toolNames[block.ToolUseID] = block.ToolName
+				// Handle ToolInput type variants to avoid double-encoding
+				var display string
+				switch v := block.ToolInput.(type) {
+				case nil:
+					display = "{}"
+				case string:
+					display = v
+				case json.RawMessage:
+					display = string(v)
+				default:
+					b, _ := json.Marshal(v)
+					display = string(b)
+				}
+				if len(display) > 200 {
+					display = display[:200] + "..."
+				}
+				result = append(result, ChatMessage{
+					Role:     "tool_call",
+					ToolName: block.ToolName,
+					Content:  display,
+				})
+
+			case "tool_result":
+				content := block.Content
+				lines := strings.Split(content, "\n")
+				if len(lines) > 50 {
+					content = strings.Join(lines[:50], "\n") + "\n... (truncated)"
+				}
+				toolName := toolNames[block.ToolUseID]
+				if toolName == "" {
+					toolName = "tool"
+				}
+				result = append(result, ChatMessage{
+					Role:     "tool_result",
+					ToolName: toolName,
+					Content:  content,
+				})
+			}
+		}
+	}
+	return result
 }
 
 // dotTickMsg drives the animated "..." indicator while waiting for a response.
@@ -38,6 +103,13 @@ func NewChatModel() ChatModel {
 		glamour.WithWordWrap(0),
 	)
 	return ChatModel{renderer: r}
+}
+
+// LoadMessages replaces the chat view with messages from a resumed session.
+func (m *ChatModel) LoadMessages(msgs []ChatMessage) {
+	m.messages = msgs
+	m.renderMessages()
+	m.viewport.GotoBottom()
 }
 
 func (m ChatModel) Init() tea.Cmd {
