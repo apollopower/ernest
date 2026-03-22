@@ -20,6 +20,13 @@ type AgentEventMsg struct {
 // StreamDoneMsg signals the agent event channel has closed.
 type StreamDoneMsg struct{}
 
+// CompactionDoneMsg signals compaction completed.
+type CompactionDoneMsg struct {
+	Before int
+	After  int
+	Err    error
+}
+
 type AppModel struct {
 	chat           ChatModel
 	input          InputModel
@@ -31,6 +38,7 @@ type AppModel struct {
 	focused        bool   // true = input focused, false = vim nav mode
 	streaming      bool   // true while agent is streaming a response
 	confirming     bool   // true while tool confirmation dialog is visible
+	compacting     bool   // true while context compaction is running
 	pendingG       bool   // waiting for second 'g' in "gg" sequence
 	width          int
 	height         int
@@ -87,8 +95,8 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case SubmitMsg:
-		if m.streaming || m.confirming {
-			return m, nil // ignore input while streaming or confirming
+		if m.streaming || m.confirming || m.compacting {
+			return m, nil // ignore input while streaming, confirming, or compacting
 		}
 
 		// Slash command detection: /command args
@@ -124,6 +132,26 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case AgentEventMsg:
 		return m.handleAgentEvent(msg.Event)
+
+	case CompactionDoneMsg:
+		m.compacting = false
+		if m.cancelStream != nil {
+			m.cancelStream()
+			m.cancelStream = nil
+		}
+		if msg.Err != nil {
+			m.chat.AddSystemMessage("Compaction failed: " + msg.Err.Error())
+		} else if msg.Before == msg.After {
+			m.chat.AddSystemMessage("Nothing to compact.")
+		} else {
+			m.chat.AddSystemMessage(fmt.Sprintf("Compacted: %d → %d tokens", msg.Before, msg.After))
+			// Use EstimateCurrentTokens for consistent display (includes system prompt)
+			if m.agent != nil {
+				tokens := m.agent.EstimateCurrentTokens()
+				m.statusBar, _ = m.statusBar.Update(StatusUpdateMsg{Tokens: tokens})
+			}
+		}
+		return m, nil
 
 	case ToolApproveMsg:
 		m.confirming = false
@@ -164,7 +192,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		// Ctrl+C always takes priority — even during confirmation dialog
 		if msg.Type == tea.KeyCtrlC {
-			if m.streaming {
+			if m.streaming || m.compacting {
 				if m.cancelStream != nil {
 					m.cancelStream()
 					m.cancelStream = nil
@@ -177,6 +205,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.chat.FinalizeMessage()
 				m.streaming = false
+				m.compacting = false
 				m.confirming = false
 				m.confirmDialog = nil
 				return m, nil
@@ -241,11 +270,8 @@ func (m AppModel) handleAgentEvent(evt agent.AgentEvent) (tea.Model, tea.Cmd) {
 		return m, waitForAgentEvent(m.agentCh)
 
 	case "usage":
-		if evt.Usage != nil {
-			m.statusBar, _ = m.statusBar.Update(StatusUpdateMsg{
-				Tokens: evt.Usage.InputTokens + evt.Usage.OutputTokens,
-			})
-		}
+		// Token count is updated from the estimate in the "done" handler,
+		// not from per-turn API usage, to show context window usage consistently.
 		return m, waitForAgentEvent(m.agentCh)
 
 	case "tool_call":
@@ -287,6 +313,21 @@ func (m AppModel) handleAgentEvent(evt agent.AgentEvent) (tea.Model, tea.Cmd) {
 		if m.cancelStream != nil {
 			m.cancelStream()
 			m.cancelStream = nil
+		}
+		// Update token estimate in status bar
+		if m.agent != nil {
+			tokens := m.agent.EstimateCurrentTokens()
+			maxTokens := m.agent.MaxContextTokens()
+			m.statusBar, _ = m.statusBar.Update(StatusUpdateMsg{
+				Tokens:    tokens,
+				MaxTokens: maxTokens,
+			})
+			// Auto-compact if needed (reuse computed tokens to avoid re-estimating)
+			if maxTokens > 0 && tokens > (maxTokens*90/100) {
+				m.compacting = true
+				m.chat.AddSystemMessage("Auto-compacting conversation...")
+				return m, m.runCompaction()
+			}
 		}
 		return m, nil
 	}
@@ -398,6 +439,16 @@ func (m AppModel) executeCmd(name, args string) (tea.Model, tea.Cmd) {
 		}
 		m.chat.AddSystemMessage("Conversation cleared.")
 		return m, nil
+
+	case "compact":
+		if m.agent == nil {
+			m.chat.AddSystemMessage("No agent configured.")
+			return m, nil
+		}
+		m.compacting = true
+		m.chat.AddSystemMessage("Compacting conversation...")
+		return m, m.runCompaction()
+
 	}
 
 	m.chat.AddSystemMessage("Unknown command: " + name)
@@ -413,6 +464,19 @@ var knownCommands = map[string]bool{
 
 func isKnownCommand(name string) bool {
 	return knownCommands[name]
+}
+
+// runCompaction returns a tea.Cmd that runs compaction in a goroutine
+// and sends a CompactionDoneMsg when complete. Uses cancelStream context
+// so Ctrl+C can abort compaction.
+func (m *AppModel) runCompaction() tea.Cmd {
+	a := m.agent
+	ctx, cancel := context.WithCancel(context.Background())
+	m.cancelStream = cancel
+	return func() tea.Msg {
+		before, after, err := a.Compact(ctx)
+		return CompactionDoneMsg{Before: before, After: after, Err: err}
+	}
 }
 
 // saveSession persists the current session to disk.

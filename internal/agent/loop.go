@@ -8,6 +8,7 @@ import (
 	"ernest/internal/tools"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 )
 
@@ -41,24 +42,191 @@ type toolCall struct {
 
 // Agent manages conversation history and dispatches prompts to providers.
 type Agent struct {
-	mu          sync.Mutex
-	router      *provider.Router
-	registry    *tools.Registry
-	permissions *PermissionChecker
-	claudeCfg   *config.ClaudeConfig
-	history     []provider.Message
-	confirmCh   chan ToolDecision // buffered(1), internal — use ResolveTool to send
+	mu               sync.Mutex
+	router           *provider.Router
+	registry         *tools.Registry
+	permissions      *PermissionChecker
+	claudeCfg        *config.ClaudeConfig
+	history          []provider.Message
+	maxContextTokens int
+	confirmCh        chan ToolDecision // buffered(1), internal — use ResolveTool to send
 }
 
 // New creates an agent with the given router, tool registry, and claude config.
-func New(router *provider.Router, registry *tools.Registry, claudeCfg *config.ClaudeConfig) *Agent {
+func New(router *provider.Router, registry *tools.Registry, claudeCfg *config.ClaudeConfig, maxContextTokens int) *Agent {
 	return &Agent{
-		router:      router,
-		registry:    registry,
-		permissions: NewPermissionChecker(claudeCfg),
-		claudeCfg:   claudeCfg,
-		confirmCh:   make(chan ToolDecision, 1),
+		router:           router,
+		registry:         registry,
+		permissions:      NewPermissionChecker(claudeCfg),
+		claudeCfg:        claudeCfg,
+		maxContextTokens: maxContextTokens,
+		confirmCh:        make(chan ToolDecision, 1),
 	}
+}
+
+// EstimateCurrentTokens returns the estimated token count for the current
+// conversation history plus system prompt.
+func (a *Agent) EstimateCurrentTokens() int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	tokens := EstimateTokens(a.history)
+	if a.claudeCfg != nil {
+		tokens += EstimateSystemPromptTokens(a.claudeCfg.SystemPrompt)
+	}
+	return tokens
+}
+
+// NeedsCompaction returns true if the estimated token count exceeds 90%
+// of the max context window.
+func (a *Agent) NeedsCompaction() bool {
+	if a.maxContextTokens <= 0 {
+		return false
+	}
+	return a.EstimateCurrentTokens() > (a.maxContextTokens * 90 / 100)
+}
+
+// MaxContextTokens returns the configured max context token limit.
+func (a *Agent) MaxContextTokens() int {
+	return a.maxContextTokens
+}
+
+const compactionSystemPrompt = `You are summarizing a coding conversation for context continuity. Produce a
+concise summary that preserves:
+- The user's current goal and task
+- Key decisions made and their rationale
+- Files that were read, created, or modified (with paths)
+- Any errors encountered and how they were resolved
+- The current state of work (what's done, what's next)
+
+Format as a structured summary, not a conversation. Be terse.`
+
+// Compact summarizes the conversation to reduce token usage.
+// Called by the TUI between turns, NOT inside Run().
+// Preserves the last 2 exchanges to maintain recent context.
+func (a *Agent) Compact(ctx context.Context) (before int, after int, err error) {
+	a.mu.Lock()
+	history := make([]provider.Message, len(a.history))
+	copy(history, a.history)
+	a.mu.Unlock()
+
+	before = EstimateTokens(history)
+
+	if len(history) < 2 {
+		return before, before, nil // too short, no-op
+	}
+
+	// Preserve the last exchange (last 2 messages). If there are 4+ messages,
+	// preserve the last 2 exchanges (4 messages) to maintain more context.
+	preserveCount := 2
+	if len(history) >= 6 {
+		preserveCount = 4
+	}
+	toSummarize := history[:len(history)-preserveCount]
+	preserved := history[len(history)-preserveCount:]
+
+	// If nothing to summarize (e.g., only 2 messages), summarize the
+	// entire conversation — the summary+ack replaces it all, preserving
+	// nothing verbatim. This handles the case of a single long response.
+	if len(toSummarize) == 0 {
+		toSummarize = history
+		preserved = nil
+	}
+
+	// Skip compaction if the portion to summarize is too small to benefit
+	// (avoids wasting an API call for negligible savings).
+	// Exception: allow compaction of any size when the full conversation is
+	// being summarized (preserved == nil), as the user explicitly asked or
+	// a single long response is consuming context.
+	if preserved != nil && len(toSummarize) < 3 {
+		return before, before, nil // not enough to benefit, no-op
+	}
+
+	// Ask the model to summarize the older portion
+	summaryMessages := []provider.Message{
+		{
+			Role: provider.RoleUser,
+			Content: []provider.ContentBlock{{
+				Type: "text",
+				Text: "Summarize the following conversation:\n\n" + formatMessagesForSummary(toSummarize),
+			}},
+		},
+	}
+
+	streamCh, _, err := a.router.Stream(ctx, compactionSystemPrompt, summaryMessages, nil)
+	if err != nil {
+		return before, before, fmt.Errorf("compaction failed: %w", err)
+	}
+
+	// Collect the summary text
+	var sb strings.Builder
+	for evt := range streamCh {
+		if evt.Type == "text_delta" {
+			sb.WriteString(evt.Text)
+		}
+		if evt.Type == "error" && evt.Error != nil {
+			return before, before, fmt.Errorf("compaction failed: %w", evt.Error)
+		}
+	}
+	summaryText := sb.String()
+
+	if summaryText == "" {
+		return before, before, fmt.Errorf("compaction produced empty summary")
+	}
+
+	// Build new history: context summary + preserved recent exchanges
+	newHistory := []provider.Message{
+		{
+			Role: provider.RoleUser,
+			Content: []provider.ContentBlock{{
+				Type: "text",
+				Text: "[Context from previous conversation]\n" + summaryText + "\n[End of context. The conversation continues below.]",
+			}},
+		},
+		{
+			Role: provider.RoleAssistant,
+			Content: []provider.ContentBlock{{
+				Type: "text",
+				Text: "Understood. I have the context from our previous conversation. Let's continue.",
+			}},
+		},
+	}
+	newHistory = append(newHistory, preserved...)
+
+	a.mu.Lock()
+	if len(a.history) != len(history) {
+		a.mu.Unlock()
+		return before, before, fmt.Errorf("history modified during compaction, aborting")
+	}
+	a.history = newHistory
+	a.mu.Unlock()
+
+	after = EstimateTokens(newHistory)
+	return before, after, nil
+}
+
+// formatMessagesForSummary converts messages to a readable format for the
+// compaction prompt.
+func formatMessagesForSummary(messages []provider.Message) string {
+	var parts []string
+	for _, msg := range messages {
+		role := string(msg.Role)
+		for _, block := range msg.Content {
+			switch block.Type {
+			case "text":
+				parts = append(parts, role+": "+block.Text)
+			case "tool_use":
+				inputJSON, _ := json.Marshal(block.ToolInput)
+				parts = append(parts, role+": [called "+block.ToolName+" with "+string(inputJSON)+"]")
+			case "tool_result":
+				content := block.Content
+				if len(content) > 500 {
+					content = content[:500] + "... (truncated)"
+				}
+				parts = append(parts, role+": [tool result: "+content+"]")
+			}
+		}
+	}
+	return strings.Join(parts, "\n")
 }
 
 // History returns a copy of the conversation history.
