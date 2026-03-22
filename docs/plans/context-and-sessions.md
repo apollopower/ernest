@@ -18,7 +18,7 @@ Without compaction, a multi-tool coding session can easily consume 50-100K token
 
 Implement in three phases:
 
-**Phase 1** builds the session storage format and slash command infrastructure. Sessions are serialized as JSON files in `~/.config/ernest/sessions/`. Slash commands (`/save`, `/clear`, `/status`) are routed from both the input box and the `:` command palette. Auto-save on exit.
+**Phase 1** builds the session storage format and slash command infrastructure. Sessions are serialized as JSON files in `{UserConfigDir}/ernest/sessions/` (via `os.UserConfigDir()`). Slash commands (`/save`, `/clear`, `/status`) are routed from both the input box and the `:` command palette. Auto-save on exit.
 
 **Phase 2** adds token counting and context compaction. Token counts are estimated using a simple heuristic (chars/4 for text, structured counting for tool blocks). When the conversation approaches the configured `max_context_tokens` threshold, compaction is triggered — the model is asked to summarize the conversation, and the summary replaces the history. `/compact` allows manual compaction.
 
@@ -59,7 +59,7 @@ type sessionMeta struct {
 }
 ```
 
-Go's `json.Unmarshal` silently ignores fields not present in the target struct, so decoding a full session file into `sessionMeta` skips the `Messages` array without parsing it.
+Go's `encoding/json` will still scan the entire JSON document (including the `messages` array), but it silently ignores fields not present in the target struct. Decoding a full session file into `sessionMeta` avoids allocating and unmarshaling the `Messages` slice and its elements, keeping listing fast and low-allocation while still reading the full file.
 
 ### Token Estimator (`internal/agent/context.go`)
 
@@ -265,14 +265,14 @@ Conversion rules:
 - `RoleUser` + tool_result block → `ChatMessage{Role: "tool_result", ToolName: name, Content: result}`
 - Multi-block messages produce multiple ChatMessages
 
-#### Step 3.3: Auto-resume Prompt
+#### Step 3.4: Auto-resume Prompt
 
 On startup, if a recent session exists for the current project dir (updated within last 24 hours):
 - Show a prompt: "Resume previous session? (y/n)"
 - `y`: load the session
 - `n` or any other key: start fresh
 
-#### Step 3.4: Tests for Phase 3
+#### Step 3.5: Tests for Phase 3
 
 - `/resume` listing format
 - Session load into agent
