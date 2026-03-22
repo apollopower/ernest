@@ -79,17 +79,22 @@ func (a *Agent) ResolveTool(toolUseID string, approved bool) {
 // before the tool starts executing.
 func (a *Agent) AllowToolAlways(toolUseID, toolName string) error {
 	a.permissions.Allow(toolName)
+
+	// Persist to disk. Even if this fails, always unblock the agent loop
+	// so the TUI doesn't hang.
+	var persistErr error
 	if a.claudeCfg != nil && a.claudeCfg.ProjectDir != "" {
 		if err := config.SaveAllowedTool(a.claudeCfg.ProjectDir, toolName); err != nil {
-			return err
+			persistErr = err
 		}
 	}
+
 	select {
 	case a.confirmCh <- ToolDecision{ToolUseID: toolUseID, Approved: true}:
 	default:
 		log.Printf("[agent] dropped always-allow decision for %s (no receiver)", toolUseID)
 	}
-	return nil
+	return persistErr
 }
 
 // Run executes the full agent loop for a user prompt.

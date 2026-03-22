@@ -100,12 +100,15 @@ func LoadClaudeConfig(projectDir string) (*ClaudeConfig, error) {
 func SaveAllowedTool(projectDir, toolName string) error {
 	path := filepath.Join(projectDir, ".claude", "settings.local.json")
 
-	// Read existing settings
+	// Read existing settings. Only start fresh if the file doesn't exist;
+	// other read errors (permissions, I/O) are propagated.
 	var settings map[string]any
 	if data, err := os.ReadFile(path); err == nil {
 		if err := json.Unmarshal(data, &settings); err != nil {
 			return fmt.Errorf("cannot parse existing settings file %s: %w", path, err)
 		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("cannot read %s: %w", path, err)
 	}
 	if settings == nil {
 		settings = make(map[string]any)

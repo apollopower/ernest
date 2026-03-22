@@ -87,7 +87,11 @@ func (m ToolConfirmModel) View() string {
 func (m ToolConfirmModel) formatInput() string {
 	var parsed map[string]any
 	if err := json.Unmarshal([]byte(m.toolInput), &parsed); err != nil {
-		return m.toolInput
+		s := m.toolInput
+		if len(s) > 200 {
+			s = s[:200] + "..."
+		}
+		return s
 	}
 
 	// Show the most relevant field based on tool type

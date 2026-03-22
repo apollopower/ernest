@@ -56,6 +56,9 @@ func (m AppModel) Init() tea.Cmd {
 // schedules the next read after processing it. This avoids blocking the
 // BubbleTea update loop.
 func waitForAgentEvent(ch <-chan agent.AgentEvent) tea.Cmd {
+	if ch == nil {
+		return func() tea.Msg { return StreamDoneMsg{} }
+	}
 	return func() tea.Msg {
 		event, ok := <-ch
 		if !ok {
@@ -71,6 +74,9 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.layout()
+		if m.confirmDialog != nil {
+			m.confirmDialog.width = msg.Width
+		}
 		return m, nil
 
 	case SubmitMsg:
@@ -133,16 +139,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
-		// Confirmation dialog captures all keys
-		if m.confirming && m.confirmDialog != nil {
-			var cmd tea.Cmd
-			dialog := *m.confirmDialog
-			dialog, cmd = dialog.Update(msg)
-			m.confirmDialog = &dialog
-			return m, cmd
-		}
-
-		// Ctrl+C: cancel streaming or quit
+		// Ctrl+C always takes priority — even during confirmation dialog
 		if msg.Type == tea.KeyCtrlC {
 			if m.streaming {
 				if m.cancelStream != nil {
@@ -176,6 +173,15 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			return m, nil
+		}
+
+		// Confirmation dialog captures remaining keys (after Ctrl+C/Esc)
+		if m.confirming && m.confirmDialog != nil {
+			var cmd tea.Cmd
+			dialog := *m.confirmDialog
+			dialog, cmd = dialog.Update(msg)
+			m.confirmDialog = &dialog
+			return m, cmd
 		}
 
 		// Command mode (after pressing ":")
