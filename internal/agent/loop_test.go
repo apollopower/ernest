@@ -62,7 +62,7 @@ func TestAgent_TextOnlyResponse(t *testing.T) {
 	}
 
 	router := provider.NewRouter([]provider.Provider{mp}, 30*time.Second)
-	a := New(router, nil, &config.ClaudeConfig{})
+	a := New(router, nil, &config.ClaudeConfig{}, 0)
 
 	events := a.Run(context.Background(), "Hi")
 
@@ -105,7 +105,7 @@ func TestAgent_ConversationHistory(t *testing.T) {
 	}
 
 	router := provider.NewRouter([]provider.Provider{mp}, 30*time.Second)
-	a := New(router, nil, &config.ClaudeConfig{SystemPrompt: "Be helpful"})
+	a := New(router, nil, &config.ClaudeConfig{SystemPrompt: "Be helpful"}, 0)
 
 	// First turn
 	for range a.Run(context.Background(), "First message") {
@@ -140,7 +140,7 @@ func TestAgent_ErrorEvent(t *testing.T) {
 	}
 
 	router := provider.NewRouter([]provider.Provider{mp}, 30*time.Second)
-	a := New(router, nil, &config.ClaudeConfig{})
+	a := New(router, nil, &config.ClaudeConfig{}, 0)
 
 	var gotError bool
 	var text string
@@ -172,7 +172,7 @@ func TestAgent_ContextCancellation(t *testing.T) {
 	}
 
 	router := provider.NewRouter([]provider.Provider{mp}, 30*time.Second)
-	a := New(router, nil, &config.ClaudeConfig{})
+	a := New(router, nil, &config.ClaudeConfig{}, 0)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel immediately
@@ -222,7 +222,7 @@ func TestAgent_ToolCallAndExecution(t *testing.T) {
 
 	registry := tools.NewRegistry(&mockTool{name: "read_file", result: "hello world"})
 	router := provider.NewRouter([]provider.Provider{mp}, 30*time.Second)
-	a := New(router, registry, &config.ClaudeConfig{})
+	a := New(router, registry, &config.ClaudeConfig{}, 0)
 
 	var events []AgentEvent
 	for evt := range a.Run(context.Background(), "Read /tmp/test.txt") {
@@ -314,7 +314,7 @@ func TestAgent_UnknownTool(t *testing.T) {
 
 	registry := tools.NewRegistry(&mockTool{name: "read_file", result: "ok"})
 	router := provider.NewRouter([]provider.Provider{mp}, 30*time.Second)
-	a := New(router, registry, &config.ClaudeConfig{})
+	a := New(router, registry, &config.ClaudeConfig{}, 0)
 
 	var gotToolResult bool
 	for evt := range a.Run(context.Background(), "Use unknown tool") {
@@ -354,7 +354,7 @@ func TestAgent_ToolExecutionError(t *testing.T) {
 		err:  context.DeadlineExceeded,
 	})
 	router := provider.NewRouter([]provider.Provider{mp}, 30*time.Second)
-	a := New(router, registry, &config.ClaudeConfig{})
+	a := New(router, registry, &config.ClaudeConfig{}, 0)
 
 	var gotToolResult bool
 	for evt := range a.Run(context.Background(), "Run failing tool") {
@@ -395,7 +395,7 @@ func TestAgent_MultipleToolCalls(t *testing.T) {
 
 	registry := tools.NewRegistry(&mockTool{name: "read_file", result: "content"})
 	router := provider.NewRouter([]provider.Provider{mp}, 30*time.Second)
-	a := New(router, registry, &config.ClaudeConfig{})
+	a := New(router, registry, &config.ClaudeConfig{}, 0)
 
 	toolCallCount := 0
 	for evt := range a.Run(context.Background(), "Read both files") {
@@ -433,7 +433,7 @@ func TestAgent_ToolConfirmation_Approved(t *testing.T) {
 		requiresConfirmation: true,
 	})
 	router := provider.NewRouter([]provider.Provider{mp}, 30*time.Second)
-	a := New(router, registry, &config.ClaudeConfig{})
+	a := New(router, registry, &config.ClaudeConfig{}, 0)
 
 	events := a.Run(context.Background(), "Run echo hi")
 
@@ -489,7 +489,7 @@ func TestAgent_ToolConfirmation_Denied(t *testing.T) {
 		requiresConfirmation: true,
 	})
 	router := provider.NewRouter([]provider.Provider{mp}, 30*time.Second)
-	a := New(router, registry, &config.ClaudeConfig{})
+	a := New(router, registry, &config.ClaudeConfig{}, 0)
 
 	events := a.Run(context.Background(), "Delete everything")
 
@@ -540,7 +540,7 @@ func TestAgent_ToolPermission_AutoAllowed(t *testing.T) {
 	})
 	router := provider.NewRouter([]provider.Provider{mp}, 30*time.Second)
 	// bash is in allowedTools — should skip confirmation
-	a := New(router, registry, &config.ClaudeConfig{AllowedTools: []string{"bash"}})
+	a := New(router, registry, &config.ClaudeConfig{AllowedTools: []string{"bash"}}, 0)
 
 	var gotConfirm bool
 	var gotResult bool
@@ -589,7 +589,7 @@ func TestAgent_ToolPermission_Denied(t *testing.T) {
 	})
 	router := provider.NewRouter([]provider.Provider{mp}, 30*time.Second)
 	// bash is in deniedTools — should auto-deny without confirmation
-	a := New(router, registry, &config.ClaudeConfig{DeniedTools: []string{"bash"}})
+	a := New(router, registry, &config.ClaudeConfig{DeniedTools: []string{"bash"}}, 0)
 
 	var gotConfirm bool
 	var gotResult bool
@@ -642,7 +642,7 @@ func TestAgent_AllowToolAlways(t *testing.T) {
 		requiresConfirmation: true,
 	})
 	router := provider.NewRouter([]provider.Provider{mp}, 30*time.Second)
-	a := New(router, registry, &config.ClaudeConfig{ProjectDir: dir})
+	a := New(router, registry, &config.ClaudeConfig{ProjectDir: dir}, 0)
 
 	// First run: should get confirmation, use AllowToolAlways
 	var gotConfirm bool

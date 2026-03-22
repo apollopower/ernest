@@ -72,7 +72,7 @@ func main() {
 
 	cooldown := time.Duration(cfg.CooldownSeconds) * time.Second
 	router := provider.NewRouter(providers, cooldown)
-	a := agent.New(router, registry, claudeCfg)
+	a := agent.New(router, registry, claudeCfg, cfg.MaxContextTokens)
 	sess := session.New(cwd)
 
 	app := tui.NewAppModel(cfg, claudeCfg, a, sess)
