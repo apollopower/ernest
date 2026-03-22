@@ -64,7 +64,7 @@ func LoadClaudeConfig(projectDir string) (*ClaudeConfig, error) {
 
 	// Load settings for tool permissions.
 	// Resolution order: user-global → project shared → project local.
-	// Later entries override/append to earlier ones.
+	// Later entries append to AllowedTools/DeniedTools and override PermissionMode.
 	for _, settingsPath := range []string{
 		filepath.Join(home, ".claude", "settings.json"),
 		filepath.Join(projectDir, ".claude", "settings.json"),
@@ -103,7 +103,9 @@ func SaveAllowedTool(projectDir, toolName string) error {
 	// Read existing settings
 	var settings map[string]any
 	if data, err := os.ReadFile(path); err == nil {
-		json.Unmarshal(data, &settings)
+		if err := json.Unmarshal(data, &settings); err != nil {
+			return fmt.Errorf("cannot parse existing settings file %s: %w", path, err)
+		}
 	}
 	if settings == nil {
 		settings = make(map[string]any)

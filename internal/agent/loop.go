@@ -63,8 +63,14 @@ func New(router *provider.Router, registry *tools.Registry, claudeCfg *config.Cl
 
 // ResolveTool sends a tool confirmation decision to the agent loop.
 // Called by the TUI when the user approves or denies a tool use.
+// Non-blocking: if the agent is no longer waiting (e.g., cancelled), the
+// decision is silently dropped.
 func (a *Agent) ResolveTool(toolUseID string, approved bool) {
-	a.confirmCh <- ToolDecision{ToolUseID: toolUseID, Approved: approved}
+	select {
+	case a.confirmCh <- ToolDecision{ToolUseID: toolUseID, Approved: approved}:
+	default:
+		log.Printf("[agent] dropped tool decision for %s (no receiver)", toolUseID)
+	}
 }
 
 // AllowToolAlways approves the current tool call, adds the tool to the
@@ -73,10 +79,16 @@ func (a *Agent) ResolveTool(toolUseID string, approved bool) {
 // before the tool starts executing.
 func (a *Agent) AllowToolAlways(toolUseID, toolName string) error {
 	a.permissions.Allow(toolName)
-	if err := config.SaveAllowedTool(a.claudeCfg.ProjectDir, toolName); err != nil {
-		return err
+	if a.claudeCfg != nil && a.claudeCfg.ProjectDir != "" {
+		if err := config.SaveAllowedTool(a.claudeCfg.ProjectDir, toolName); err != nil {
+			return err
+		}
 	}
-	a.confirmCh <- ToolDecision{ToolUseID: toolUseID, Approved: true}
+	select {
+	case a.confirmCh <- ToolDecision{ToolUseID: toolUseID, Approved: true}:
+	default:
+		log.Printf("[agent] dropped always-allow decision for %s (no receiver)", toolUseID)
+	}
 	return nil
 }
 
@@ -231,18 +243,24 @@ func (a *Agent) executeToolWithConfirmation(ctx context.Context, tc toolCall, ev
 			ToolUseID: tc.ToolUseID,
 		}
 
-		// Block until user responds or context is cancelled
-		select {
-		case decision := <-a.confirmCh:
-			if decision.ToolUseID != tc.ToolUseID {
-				return "", fmt.Errorf("stale tool decision (got %s, want %s)", decision.ToolUseID, tc.ToolUseID)
+		// Block until user responds with matching ToolUseID or context is cancelled.
+		// Discard stale decisions from previous tool uses.
+		for {
+			select {
+			case decision := <-a.confirmCh:
+				if decision.ToolUseID != tc.ToolUseID {
+					log.Printf("[agent] discarding stale tool decision: got %s, want %s", decision.ToolUseID, tc.ToolUseID)
+					continue
+				}
+				if !decision.Approved {
+					return "", fmt.Errorf("tool use denied by user")
+				}
+				goto confirmed
+			case <-ctx.Done():
+				return "", fmt.Errorf("cancelled")
 			}
-			if !decision.Approved {
-				return "", fmt.Errorf("tool use denied by user")
-			}
-		case <-ctx.Done():
-			return "", fmt.Errorf("cancelled")
 		}
+	confirmed:
 	}
 
 	return tool.Execute(ctx, json.RawMessage(tc.ToolInput))
