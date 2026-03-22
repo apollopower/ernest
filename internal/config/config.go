@@ -15,9 +15,10 @@ type Config struct {
 
 type ProviderConfig struct {
 	Name      string `yaml:"name"`
-	APIKeyEnv string `yaml:"api_key_env"`
+	APIKeyEnv string `yaml:"api_key_env,omitempty"` // deprecated, backward compat
 	Model     string `yaml:"model"`
 	Priority  int    `yaml:"priority"`
+	BaseURL   string `yaml:"base_url,omitempty"` // for OpenAI-compatible providers
 }
 
 func DefaultConfig() Config {
