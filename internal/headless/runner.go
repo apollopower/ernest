@@ -135,13 +135,12 @@ func (r *Runner) consumeEvents(ctx context.Context, events <-chan agent.AgentEve
 		case "tool_confirm":
 			// In headless mode without --auto-approve, auto-deny
 			r.agent.ResolveTool(evt.ToolUseID, false)
+			denyErr := fmt.Errorf("tool %s denied (headless mode, use --auto-approve)", evt.ToolName)
+			lastError = denyErr
 			if r.format == FormatJSON {
-				writeJSON(r.out, OutputEvent{
-					Type:  "error",
-					Error: fmt.Sprintf("tool %s denied (headless mode, use --auto-approve)", evt.ToolName),
-				})
+				writeJSON(r.out, OutputEvent{Type: "error", Error: denyErr.Error()})
 			} else {
-				fmt.Fprintf(os.Stderr, "tool %s denied (headless mode, use --auto-approve)\n", evt.ToolName)
+				fmt.Fprintln(os.Stderr, denyErr.Error())
 			}
 
 		case "usage":
@@ -174,11 +173,9 @@ func (r *Runner) consumeEvents(ctx context.Context, events <-chan agent.AgentEve
 						Input:  lastUsage.Usage.InputTokens,
 						Output: lastUsage.Usage.OutputTokens,
 					}
-				} else {
-					// Fall back to estimate if no API usage available
-					tokens := r.agent.EstimateCurrentTokens()
-					doneEvt.Tokens = &Tokens{Input: tokens}
 				}
+				// Omit tokens entirely when no usage data available
+				// to avoid misleading zero values
 				writeJSON(r.out, doneEvt)
 				lastUsage = nil // reset for next turn
 			}

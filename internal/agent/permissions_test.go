@@ -260,3 +260,50 @@ func TestPermissionChecker_AllowRuntime(t *testing.T) {
 		t.Error("expected Ask for non-matching command")
 	}
 }
+
+func TestPermissionChecker_AutoApprove(t *testing.T) {
+	pc := NewPermissionChecker(&config.ClaudeConfig{}, true)
+
+	// Everything should be allowed
+	if pc.Check("bash", json.RawMessage(`{"command": "rm -rf /"}`)) != PermissionAllowed {
+		t.Error("expected auto-approve to allow bash")
+	}
+	if pc.Check("write_file", nil) != PermissionAllowed {
+		t.Error("expected auto-approve to allow write_file")
+	}
+	if pc.Check("unknown_tool", nil) != PermissionAllowed {
+		t.Error("expected auto-approve to allow unknown tools")
+	}
+}
+
+func TestPermissionChecker_AutoApproveRespectsExplicitDeny(t *testing.T) {
+	pc := NewPermissionChecker(&config.ClaudeConfig{
+		DeniedTools: []string{"bash"},
+	}, true)
+
+	// bash denied even with auto-approve
+	if pc.Check("bash", nil) != PermissionDenied {
+		t.Error("expected denied to override auto-approve")
+	}
+
+	// other tools still allowed
+	if pc.Check("write_file", nil) != PermissionAllowed {
+		t.Error("expected auto-approve for non-denied tools")
+	}
+}
+
+func TestPermissionChecker_AutoApproveRespectsGranularDeny(t *testing.T) {
+	pc := NewPermissionChecker(&config.ClaudeConfig{
+		DeniedTools: []string{"bash(rm *)"},
+	}, true)
+
+	// rm commands denied even with auto-approve
+	if pc.Check("bash", json.RawMessage(`{"command": "rm -rf /"}`)) != PermissionDenied {
+		t.Error("expected granular deny to override auto-approve")
+	}
+
+	// other bash commands allowed
+	if pc.Check("bash", json.RawMessage(`{"command": "echo hello"}`)) != PermissionAllowed {
+		t.Error("expected auto-approve for non-denied bash commands")
+	}
+}

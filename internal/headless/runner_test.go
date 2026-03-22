@@ -117,7 +117,9 @@ func TestRunPrompt_JSONOutput(t *testing.T) {
 
 	// First line should be session event with version
 	var sessionEvt OutputEvent
-	json.Unmarshal([]byte(lines[0]), &sessionEvt)
+	if err := json.Unmarshal([]byte(lines[0]), &sessionEvt); err != nil {
+		t.Fatalf("failed to parse session event: %v", err)
+	}
 	if sessionEvt.Type != "session" {
 		t.Errorf("expected first event type 'session', got %q", sessionEvt.Type)
 	}
@@ -130,7 +132,9 @@ func TestRunPrompt_JSONOutput(t *testing.T) {
 
 	// Last line should be done event
 	var doneEvt OutputEvent
-	json.Unmarshal([]byte(lines[len(lines)-1]), &doneEvt)
+	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &doneEvt); err != nil {
+		t.Fatalf("failed to parse done event: %v", err)
+	}
 	if doneEvt.Type != "done" {
 		t.Errorf("expected last event type 'done', got %q", doneEvt.Type)
 	}
@@ -162,7 +166,9 @@ func TestRunPrompt_JSONToolEvents(t *testing.T) {
 	var buf bytes.Buffer
 	runner := NewRunner(a, sess, FormatJSON, &buf)
 
-	runner.RunPrompt(context.Background(), "read test.txt")
+	if err := runner.RunPrompt(context.Background(), "read test.txt"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	output := buf.String()
 	if !strings.Contains(output, `"type":"tool_call"`) {
@@ -233,7 +239,11 @@ func TestRunPrompt_ToolDeniedHeadless(t *testing.T) {
 	var buf bytes.Buffer
 	runner := NewRunner(a, sess, FormatJSON, &buf)
 
-	runner.RunPrompt(context.Background(), "run echo hi")
+	// Tool denied returns an error
+	err := runner.RunPrompt(context.Background(), "run echo hi")
+	if err == nil {
+		t.Log("note: RunPrompt returned nil error despite tool denial (model may handle gracefully)")
+	}
 
 	output := buf.String()
 	if !strings.Contains(output, "denied") {
@@ -272,7 +282,9 @@ func TestRunPrompt_AutoApprove(t *testing.T) {
 	var buf bytes.Buffer
 	runner := NewRunner(a, sess, FormatJSON, &buf)
 
-	runner.RunPrompt(context.Background(), "run echo hi")
+	if err := runner.RunPrompt(context.Background(), "run echo hi"); err != nil {
+		t.Fatalf("unexpected error with auto-approve: %v", err)
+	}
 
 	output := buf.String()
 	if strings.Contains(output, "denied") {

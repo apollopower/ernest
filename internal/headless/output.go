@@ -36,6 +36,10 @@ type Tokens struct {
 
 // writeJSON writes a single OutputEvent as a JSON line.
 func writeJSON(w io.Writer, event OutputEvent) {
-	data, _ := json.Marshal(event)
+	data, err := json.Marshal(event)
+	if err != nil {
+		// Fallback: emit a minimal error event
+		data = []byte(fmt.Sprintf(`{"type":"error","error":"marshal failed: %s"}`, err.Error()))
+	}
 	fmt.Fprintf(w, "%s\n", data)
 }
