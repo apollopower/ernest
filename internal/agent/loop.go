@@ -53,11 +53,12 @@ type Agent struct {
 }
 
 // New creates an agent with the given router, tool registry, and claude config.
-func New(router *provider.Router, registry *tools.Registry, claudeCfg *config.ClaudeConfig, maxContextTokens int) *Agent {
+// autoApprove bypasses tool confirmation for all tools (except explicitly denied).
+func New(router *provider.Router, registry *tools.Registry, claudeCfg *config.ClaudeConfig, maxContextTokens int, autoApprove bool) *Agent {
 	return &Agent{
 		router:           router,
 		registry:         registry,
-		permissions:      NewPermissionChecker(claudeCfg),
+		permissions:      NewPermissionChecker(claudeCfg, autoApprove),
 		claudeCfg:        claudeCfg,
 		maxContextTokens: maxContextTokens,
 		confirmCh:        make(chan ToolDecision, 1),

@@ -27,6 +27,7 @@ const (
 //   - "read_file", "write_file", etc. — exact tool name match
 type PermissionChecker struct {
 	mu           sync.RWMutex
+	autoApprove  bool     // when true, all tools are allowed (except explicitly denied)
 	allowedTools []string // preserves order and patterns
 	deniedTools  []string
 	// Fast lookup for exact tool name matches (no pattern)
@@ -35,9 +36,11 @@ type PermissionChecker struct {
 }
 
 // NewPermissionChecker creates a checker from the Claude config's
-// allowedTools and deniedTools lists.
-func NewPermissionChecker(claudeCfg *config.ClaudeConfig) *PermissionChecker {
+// allowedTools and deniedTools lists. When autoApprove is true, Check()
+// returns PermissionAllowed for all tools except explicitly denied ones.
+func NewPermissionChecker(claudeCfg *config.ClaudeConfig, autoApprove bool) *PermissionChecker {
 	pc := &PermissionChecker{
+		autoApprove:  autoApprove,
 		allowedExact: make(map[string]bool),
 		deniedExact:  make(map[string]bool),
 	}
@@ -88,7 +91,7 @@ func (p *PermissionChecker) Check(toolName string, toolInput json.RawMessage) Pe
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 
-	// Check denied first (takes precedence)
+	// Check denied first (takes precedence, even in auto-approve mode)
 	if p.deniedExact[toolName] {
 		return PermissionDenied
 	}
@@ -99,6 +102,11 @@ func (p *PermissionChecker) Check(toolName string, toolInput json.RawMessage) Pe
 		if matchPermission(entry, toolName, toolInput) {
 			return PermissionDenied
 		}
+	}
+
+	// Auto-approve: allow everything not explicitly denied
+	if p.autoApprove {
+		return PermissionAllowed
 	}
 
 	// Check allowed

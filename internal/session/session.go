@@ -99,6 +99,27 @@ func (s *Session) SetMessages(msgs []provider.Message) {
 	}
 }
 
+// LoadByID loads a session by its 8-character hex ID.
+// Validates the ID format to prevent path traversal.
+func LoadByID(id string) (*Session, error) {
+	if !isValidHexID(id) {
+		return nil, fmt.Errorf("invalid session ID %q (expected 8 hex characters)", id)
+	}
+	return Load(filepath.Join(SessionDir(), id+".json"))
+}
+
+func isValidHexID(id string) bool {
+	if len(id) != 8 {
+		return false
+	}
+	for _, c := range id {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			return false
+		}
+	}
+	return true
+}
+
 // Load reads a session from a JSON file.
 func Load(path string) (*Session, error) {
 	data, err := os.ReadFile(path)

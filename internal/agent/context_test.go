@@ -106,7 +106,7 @@ func TestNeedsCompaction(t *testing.T) {
 	router := provider.NewRouter([]provider.Provider{mp}, 0)
 
 	// With low maxContextTokens and some history, should need compaction
-	a := New(router, nil, &config.ClaudeConfig{}, 100) // very low limit
+	a := New(router, nil, &config.ClaudeConfig{}, 100, false) // very low limit
 
 	// Add messages that exceed 90% of 100 tokens (the compaction threshold)
 	a.mu.Lock()
@@ -131,7 +131,7 @@ func TestNeedsCompaction_Disabled(t *testing.T) {
 	router := provider.NewRouter([]provider.Provider{mp}, 0)
 
 	// maxContextTokens = 0 disables compaction
-	a := New(router, nil, &config.ClaudeConfig{}, 0)
+	a := New(router, nil, &config.ClaudeConfig{}, 0, false)
 	if a.NeedsCompaction() {
 		t.Error("expected NeedsCompaction to be false when disabled")
 	}
@@ -147,7 +147,7 @@ func TestCompact_Success(t *testing.T) {
 		},
 	}
 	router := provider.NewRouter([]provider.Provider{mp}, 0)
-	a := New(router, nil, &config.ClaudeConfig{}, 180000)
+	a := New(router, nil, &config.ClaudeConfig{}, 180000, false)
 
 	// Build a conversation with 8 messages (4 exchanges) — use long text
 	// so the summary is shorter than the original.
@@ -199,7 +199,7 @@ func TestCompact_Success(t *testing.T) {
 func TestCompact_TooShort(t *testing.T) {
 	mp := &mockProvider{name: "test", events: []provider.StreamEvent{{Type: "done"}}}
 	router := provider.NewRouter([]provider.Provider{mp}, 0)
-	a := New(router, nil, &config.ClaudeConfig{}, 180000)
+	a := New(router, nil, &config.ClaudeConfig{}, 180000, false)
 
 	// Only 1 message — too short
 	a.mu.Lock()
@@ -228,7 +228,7 @@ func TestCompact_SingleLongResponse(t *testing.T) {
 		},
 	}
 	router := provider.NewRouter([]provider.Provider{mp}, 0)
-	a := New(router, nil, &config.ClaudeConfig{}, 180000)
+	a := New(router, nil, &config.ClaudeConfig{}, 180000, false)
 
 	a.mu.Lock()
 	a.history = append(a.history,

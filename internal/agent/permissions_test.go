@@ -10,7 +10,7 @@ func TestPermissionChecker_Allowed(t *testing.T) {
 	cfg := &config.ClaudeConfig{
 		AllowedTools: []string{"read_file", "glob"},
 	}
-	pc := NewPermissionChecker(cfg)
+	pc := NewPermissionChecker(cfg, false)
 
 	if pc.Check("read_file", nil) != PermissionAllowed {
 		t.Error("expected read_file to be allowed")
@@ -24,7 +24,7 @@ func TestPermissionChecker_Denied(t *testing.T) {
 	cfg := &config.ClaudeConfig{
 		DeniedTools: []string{"bash"},
 	}
-	pc := NewPermissionChecker(cfg)
+	pc := NewPermissionChecker(cfg, false)
 
 	if pc.Check("bash", nil) != PermissionDenied {
 		t.Error("expected bash to be denied")
@@ -36,7 +36,7 @@ func TestPermissionChecker_Ask(t *testing.T) {
 		AllowedTools: []string{"read_file"},
 		DeniedTools:  []string{"bash"},
 	}
-	pc := NewPermissionChecker(cfg)
+	pc := NewPermissionChecker(cfg, false)
 
 	if pc.Check("write_file", nil) != PermissionAsk {
 		t.Error("expected write_file to require asking")
@@ -48,7 +48,7 @@ func TestPermissionChecker_DeniedTakesPrecedence(t *testing.T) {
 		AllowedTools: []string{"bash"},
 		DeniedTools:  []string{"bash"},
 	}
-	pc := NewPermissionChecker(cfg)
+	pc := NewPermissionChecker(cfg, false)
 
 	if pc.Check("bash", nil) != PermissionDenied {
 		t.Error("expected denied to take precedence over allowed")
@@ -56,7 +56,7 @@ func TestPermissionChecker_DeniedTakesPrecedence(t *testing.T) {
 }
 
 func TestPermissionChecker_EmptyConfig(t *testing.T) {
-	pc := NewPermissionChecker(&config.ClaudeConfig{})
+	pc := NewPermissionChecker(&config.ClaudeConfig{}, false)
 
 	if pc.Check("anything", nil) != PermissionAsk {
 		t.Error("expected Ask for empty config")
@@ -64,7 +64,7 @@ func TestPermissionChecker_EmptyConfig(t *testing.T) {
 }
 
 func TestPermissionChecker_NilConfig(t *testing.T) {
-	pc := NewPermissionChecker(nil)
+	pc := NewPermissionChecker(nil, false)
 
 	if pc.Check("anything", nil) != PermissionAsk {
 		t.Error("expected Ask for nil config")
@@ -77,7 +77,7 @@ func TestPermissionChecker_BashExactCommand(t *testing.T) {
 	cfg := &config.ClaudeConfig{
 		AllowedTools: []string{"bash(git pull)"},
 	}
-	pc := NewPermissionChecker(cfg)
+	pc := NewPermissionChecker(cfg, false)
 
 	gitPull := json.RawMessage(`{"command": "git pull"}`)
 	gitPush := json.RawMessage(`{"command": "git push"}`)
@@ -98,7 +98,7 @@ func TestPermissionChecker_BashGlobPattern(t *testing.T) {
 	cfg := &config.ClaudeConfig{
 		AllowedTools: []string{"bash(go *)"},
 	}
-	pc := NewPermissionChecker(cfg)
+	pc := NewPermissionChecker(cfg, false)
 
 	goTest := json.RawMessage(`{"command": "go test"}`)
 	goBuild := json.RawMessage(`{"command": "go build"}`)
@@ -119,7 +119,7 @@ func TestPermissionChecker_BashGlobWithPaths(t *testing.T) {
 	cfg := &config.ClaudeConfig{
 		AllowedTools: []string{"bash(go *)"},
 	}
-	pc := NewPermissionChecker(cfg)
+	pc := NewPermissionChecker(cfg, false)
 
 	// Commands containing / should still match
 	goTestDots := json.RawMessage(`{"command": "go test ./..."}`)
@@ -138,7 +138,7 @@ func TestPermissionChecker_BashFullToolAllowStillWorks(t *testing.T) {
 	cfg := &config.ClaudeConfig{
 		AllowedTools: []string{"bash"},
 	}
-	pc := NewPermissionChecker(cfg)
+	pc := NewPermissionChecker(cfg, false)
 
 	anyCmd := json.RawMessage(`{"command": "rm -rf /"}`)
 	if pc.Check("bash", anyCmd) != PermissionAllowed {
@@ -151,7 +151,7 @@ func TestPermissionChecker_GranularDenied(t *testing.T) {
 		AllowedTools: []string{"bash(git *)"},
 		DeniedTools:  []string{"bash(git push --force)"},
 	}
-	pc := NewPermissionChecker(cfg)
+	pc := NewPermissionChecker(cfg, false)
 
 	gitPull := json.RawMessage(`{"command": "git pull"}`)
 	gitForce := json.RawMessage(`{"command": "git push --force"}`)
@@ -237,7 +237,7 @@ func TestMatchGlob(t *testing.T) {
 }
 
 func TestPermissionChecker_AllowRuntime(t *testing.T) {
-	pc := NewPermissionChecker(&config.ClaudeConfig{})
+	pc := NewPermissionChecker(&config.ClaudeConfig{}, false)
 
 	gitPull := json.RawMessage(`{"command": "git pull"}`)
 
