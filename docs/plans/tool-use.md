@@ -1,7 +1,7 @@
 # Tool Use: Interface, Core Tools, Agent Loop, and Confirmation UX
 
 ## Date: 2026-03-21
-## Status: Draft
+## Status: Complete
 ## GitHub Issue: #4
 
 ---
@@ -521,13 +521,13 @@ This plan does **NOT** include:
 - [x] Verify: end-to-end tool use with real Anthropic API
 
 ### Phase 3: Confirmation Dialog and Permissions
-- [ ] Implement `internal/agent/permissions.go` — PermissionChecker
-- [ ] Implement `internal/tui/tool_confirm.go` — confirmation dialog model
-- [ ] Add `confirmCh` (buffered size 1) coordination between agent loop and TUI
-- [ ] Wire confirmation into agent loop (check permissions, prompt if needed, `select` with `ctx.Done()`)
-- [ ] Register write tools (write_file, str_replace, bash) now that confirmation gates them
-- [ ] Update AppModel for confirmation state management
-- [ ] Add styles for confirmation dialog
-- [ ] Write permission checker tests
-- [ ] Write confirmation flow integration tests
-- [ ] Verify: end-to-end with confirmation dialog and permission checking
+- [x] Implement `internal/agent/permissions.go` — PermissionChecker
+- [x] Implement `internal/tui/tool_confirm.go` — confirmation dialog model
+- [x] Add `confirmCh` (buffered size 1) coordination between agent loop and TUI
+- [x] Wire confirmation into agent loop (check permissions, prompt if needed, `select` with `ctx.Done()`)
+- [x] Register write tools (write_file, str_replace, bash) now that confirmation gates them
+- [x] Update AppModel for confirmation state management
+- [x] Add styles for confirmation dialog
+- [x] Write permission checker tests
+- [x] Write confirmation flow integration tests
+- [x] Verify: end-to-end with confirmation dialog and permission checking
