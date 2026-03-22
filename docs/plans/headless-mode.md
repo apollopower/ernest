@@ -22,7 +22,7 @@ A headless mode that reuses the existing agent/provider/tool stack but replaces 
 
 Add CLI flags that launch Ernest in headless mode — no TUI, no alt screen. Two usage patterns:
 
-**One-shot**: `ernest -p "prompt"` sends a single prompt, streams the response, exits.
+**One-shot**: `ernest -p "prompt"` sends a single prompt, streams the response, exits. Use `ernest -p -` to read the entire stdin as a single prompt (useful for piping large inputs).
 
 **Conversational**: `ernest --headless` reads prompts from stdin line by line, streams responses to stdout, continues until EOF.
 
@@ -102,10 +102,11 @@ type Tokens struct {
 | 5 | Pipe from stdin | `echo "what is Go?" \| ernest --headless` | Responds, exits on EOF |
 | 6 | Tool confirmation without --auto-approve | `ernest -p "write a file"` | Tool denied (no TTY for confirmation), error in output |
 | 7 | Tool confirmation with --auto-approve | `ernest -p "write a file" --auto-approve` | Tool executes without prompt |
-| 8 | Resume session | `ernest --headless --resume a1b2c3d4 -p "continue"` | Loads session, sends prompt, responds |
+| 8 | Resume session (one-shot) | `ernest --resume a1b2c3d4 -p "continue"` | Loads session, sends prompt, responds |
 | 9 | API error | `ernest -p "hello"` (no API key) | Error on stderr, exits 1 |
 | 10 | JSON output with tools | `ernest -p "list files" --output json --auto-approve` | Session, tool_call, tool_result, text, done events |
 | 11 | Multi-turn JSON conversation | `ernest --headless --output json` | Each turn: text/tool events, done. New prompt starts next turn. |
+| 12 | Stdin as single prompt | `cat question.txt \| ernest -p -` | Reads all stdin as one prompt, responds, exits |
 
 ---
 
@@ -114,7 +115,7 @@ type Tokens struct {
 ### Step 1: Flag Parsing (`cmd/ernest/main.go`)
 
 Add flag parsing using Go's `flag` package:
-- `-p` / `--prompt`: string, triggers one-shot headless mode
+- `-p` / `--prompt`: string, triggers one-shot headless mode. Value `-` reads all of stdin as the prompt.
 - `--headless`: bool, triggers conversational headless mode
 - `--output`: string, "text" or "json" (default "text")
 - `--auto-approve`: bool, bypasses all tool confirmation
@@ -187,7 +188,7 @@ func (r *Runner) RunConversation(ctx context.Context, in io.Reader) error
 
 **JSON output**:
 - Each `AgentEvent` mapped to an `OutputEvent` JSON line
-- Session event emitted at start
+- Session event emitted at start of both `RunPrompt` and `RunConversation` so all JSON-mode runs include session ID and version
 - Done event includes token counts
 
 ### Step 4: Tool Confirmation in Headless Mode
