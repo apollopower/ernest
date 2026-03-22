@@ -162,6 +162,10 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		if msg.Type == tea.KeyEsc {
+			// During confirmation, Esc is a no-op — don't leak into focus management
+			if m.confirming {
+				return m, nil
+			}
 			if m.cmdMode {
 				m.cmdMode = false
 				m.pendingCmd = ""

@@ -366,9 +366,16 @@ func extractToolCalls(msg provider.Message) []toolCall {
 	for _, block := range msg.Content {
 		if block.Type == "tool_use" {
 			var inputJSON []byte
-			if block.ToolInput == nil {
+			switch v := block.ToolInput.(type) {
+			case nil:
 				inputJSON = []byte("{}")
-			} else {
+			case string:
+				// ToolInput may be a raw JSON string on parse failure — use directly
+				// to avoid double-encoding.
+				inputJSON = []byte(v)
+			case json.RawMessage:
+				inputJSON = v
+			default:
 				inputJSON, _ = json.Marshal(block.ToolInput)
 			}
 			calls = append(calls, toolCall{
