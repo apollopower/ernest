@@ -270,14 +270,16 @@ func (a *Agent) ResolveTool(toolUseID string, approved bool) {
 // in-memory allowed list, and persists the choice to .claude/settings.local.json.
 // Persistence happens before unblocking the agent to ensure the file is written
 // before the tool starts executing.
-func (a *Agent) AllowToolAlways(toolUseID, toolName string) error {
-	a.permissions.Allow(toolName)
+func (a *Agent) AllowToolAlways(toolUseID, toolName, toolInput string) error {
+	// Build granular permission key: "bash(git pull)" for bash, "write_file" for others
+	permKey := PermissionKey(toolName, json.RawMessage(toolInput))
+	a.permissions.Allow(permKey)
 
 	// Persist to disk. Even if this fails, always unblock the agent loop
 	// so the TUI doesn't hang.
 	var persistErr error
 	if a.claudeCfg != nil && a.claudeCfg.ProjectDir != "" {
-		if err := config.SaveAllowedTool(a.claudeCfg.ProjectDir, toolName); err != nil {
+		if err := config.SaveAllowedTool(a.claudeCfg.ProjectDir, permKey); err != nil {
 			persistErr = err
 		}
 	}
@@ -432,8 +434,8 @@ func (a *Agent) executeToolWithConfirmation(ctx context.Context, tc toolCall, ev
 		return "", fmt.Errorf("unknown tool: %s", tc.ToolName)
 	}
 
-	// Check permissions
-	perm := a.permissions.Check(tc.ToolName)
+	// Check permissions (with tool input for granular matching like bash commands)
+	perm := a.permissions.Check(tc.ToolName, json.RawMessage(tc.ToolInput))
 	if perm == PermissionDenied {
 		return "", fmt.Errorf("tool %s is denied by settings", tc.ToolName)
 	}

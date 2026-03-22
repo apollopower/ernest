@@ -650,7 +650,7 @@ func TestAgent_AllowToolAlways(t *testing.T) {
 		if evt.Type == "tool_confirm" {
 			gotConfirm = true
 			go func() {
-				a.AllowToolAlways(evt.ToolUseID, evt.ToolName)
+				a.AllowToolAlways(evt.ToolUseID, evt.ToolName, evt.ToolInput)
 			}()
 		}
 	}
@@ -658,17 +658,17 @@ func TestAgent_AllowToolAlways(t *testing.T) {
 		t.Fatal("expected tool_confirm on first call")
 	}
 
-	// Verify in-memory permission updated
-	if a.permissions.Check("bash") != PermissionAllowed {
-		t.Error("expected bash to be allowed in-memory after AllowToolAlways")
+	// Verify in-memory permission updated — the specific command should be allowed
+	if a.permissions.Check("bash", json.RawMessage(`{"command": "echo first"}`)) != PermissionAllowed {
+		t.Error("expected bash(echo first) to be allowed in-memory after AllowToolAlways")
 	}
 
-	// Reset provider for second run
+	// Reset provider for second run — same command, should skip confirmation
 	mp.call = 0
 	mp.turns = [][]provider.StreamEvent{
 		{
 			{Type: "tool_use_start", ToolUseID: "call_2", ToolName: "bash"},
-			{Type: "tool_input_delta", ToolInput: `{"command": "echo second"}`},
+			{Type: "tool_input_delta", ToolInput: `{"command": "echo first"}`},
 			{Type: "content_block_stop"},
 			{Type: "message_delta", StopReason: "tool_use"},
 			{Type: "done"},
@@ -679,7 +679,7 @@ func TestAgent_AllowToolAlways(t *testing.T) {
 		},
 	}
 
-	// Second run: should NOT get confirmation
+	// Second run: same command should NOT get confirmation (granular permission)
 	gotConfirm = false
 	for evt := range a.Run(context.Background(), "Run echo second") {
 		if evt.Type == "tool_confirm" {
