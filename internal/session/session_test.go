@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestNew(t *testing.T) {
@@ -162,8 +163,9 @@ func TestListSessions(t *testing.T) {
 	t.Setenv("APPDATA", dir)         // Windows
 	t.Setenv("HOME", dir)            // macOS fallback
 
-	// Create two sessions
+	// Create two sessions with explicit timestamps to avoid flaky ordering
 	s1 := New("/project1")
+	s1.UpdatedAt = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	s1.SetMessages([]provider.Message{
 		{Role: provider.RoleUser, Content: []provider.ContentBlock{{Type: "text", Text: "First session"}}},
 	})
@@ -172,6 +174,7 @@ func TestListSessions(t *testing.T) {
 	}
 
 	s2 := New("/project2")
+	s2.UpdatedAt = time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
 	s2.SetMessages([]provider.Message{
 		{Role: provider.RoleUser, Content: []provider.ContentBlock{{Type: "text", Text: "Second session"}}},
 	})

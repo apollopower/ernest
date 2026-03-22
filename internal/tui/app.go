@@ -92,14 +92,18 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		// Slash command detection: /command args
+		// Only treat as command if the name matches a known command,
+		// so messages like "/tmp/foo" pass through to the agent.
 		if strings.HasPrefix(msg.Text, "/") {
 			parts := strings.SplitN(msg.Text[1:], " ", 2)
 			name := parts[0]
-			args := ""
-			if len(parts) > 1 {
-				args = parts[1]
+			if isKnownCommand(name) {
+				args := ""
+				if len(parts) > 1 {
+					args = parts[1]
+				}
+				return m.executeCmd(name, args)
 			}
-			return m.executeCmd(name, args)
 		}
 
 		if m.agent == nil {
@@ -360,16 +364,12 @@ func (m AppModel) executeCmd(name, args string) (tea.Model, tea.Cmd) {
 
 	case "status":
 		primary := m.cfg.PrimaryProvider()
-		tokenCount := 0
-		if m.session != nil {
-			tokenCount = m.session.TokenCount
-		}
 		sessionID := "none"
 		if m.session != nil {
 			sessionID = m.session.ID
 		}
-		status := fmt.Sprintf("Provider: %s | Model: %s | Tokens: %d/%d | Session: %s",
-			primary.Name, primary.Model, tokenCount, m.cfg.MaxContextTokens, sessionID)
+		status := fmt.Sprintf("Provider: %s | Model: %s | Max tokens: %d | Session: %s",
+			primary.Name, primary.Model, m.cfg.MaxContextTokens, sessionID)
 		m.chat.AddSystemMessage(status)
 		return m, nil
 
@@ -402,6 +402,17 @@ func (m AppModel) executeCmd(name, args string) (tea.Model, tea.Cmd) {
 
 	m.chat.AddSystemMessage("Unknown command: " + name)
 	return m, nil
+}
+
+// knownCommands is the set of recognized slash/colon commands.
+var knownCommands = map[string]bool{
+	"q": true, "quit": true,
+	"status": true, "save": true, "clear": true,
+	"compact": true, "resume": true,
+}
+
+func isKnownCommand(name string) bool {
+	return knownCommands[name]
 }
 
 // saveSession persists the current session to disk.
