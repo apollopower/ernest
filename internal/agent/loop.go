@@ -78,6 +78,7 @@ func (a *Agent) EstimateCurrentTokens() int {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	tokens := EstimateTokens(a.history)
+	tokens += EstimateSystemPromptTokens(DefaultSystemPrompt)
 	if a.claudeCfg != nil {
 		tokens += EstimateSystemPromptTokens(a.claudeCfg.SystemPrompt)
 	}
@@ -311,6 +312,12 @@ func (a *Agent) Run(ctx context.Context, userPrompt string) <-chan AgentEvent {
 			toolDefs = a.registry.ToolDefs()
 		}
 
+		// Build full system prompt: Ernest defaults + user/project CLAUDE.md
+		systemPrompt := DefaultSystemPrompt
+		if a.claudeCfg != nil && a.claudeCfg.SystemPrompt != "" {
+			systemPrompt += "\n\n---\n\n" + a.claudeCfg.SystemPrompt
+		}
+
 		for iteration := 0; iteration < maxToolLoops; iteration++ {
 			a.mu.Lock()
 			history := make([]provider.Message, len(a.history))
@@ -318,7 +325,7 @@ func (a *Agent) Run(ctx context.Context, userPrompt string) <-chan AgentEvent {
 			a.mu.Unlock()
 
 			streamCh, providerName, err := a.router.Stream(
-				ctx, a.claudeCfg.SystemPrompt, history, toolDefs,
+				ctx, systemPrompt, history, toolDefs,
 			)
 			if err != nil {
 				events <- AgentEvent{Type: "error", Error: err}
