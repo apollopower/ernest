@@ -64,6 +64,14 @@ func New(router *provider.Router, registry *tools.Registry, claudeCfg *config.Cl
 	}
 }
 
+// LoadSession replaces the agent's conversation history with messages from
+// a saved session. Called by the TUI when resuming.
+func (a *Agent) LoadSession(messages []provider.Message) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.history = messages
+}
+
 // EstimateCurrentTokens returns the estimated token count for the current
 // conversation history plus system prompt.
 func (a *Agent) EstimateCurrentTokens() int {

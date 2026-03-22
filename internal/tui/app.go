@@ -7,6 +7,7 @@ import (
 	"ernest/internal/session"
 	"fmt"
 	"log"
+	"path/filepath"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -39,6 +40,7 @@ type AppModel struct {
 	streaming      bool   // true while agent is streaming a response
 	confirming     bool   // true while tool confirmation dialog is visible
 	compacting     bool   // true while context compaction is running
+	initialized    bool   // true after first WindowSizeMsg (auto-resume check)
 	pendingG       bool   // waiting for second 'g' in "gg" sequence
 	width          int
 	height         int
@@ -91,6 +93,11 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.layout()
 		if m.confirmDialog != nil {
 			m.confirmDialog.width = msg.Width
+		}
+		// Check for auto-resume on first render
+		if !m.initialized {
+			m.initialized = true
+			m.checkAutoResume()
 		}
 		return m, nil
 
@@ -449,6 +456,9 @@ func (m AppModel) executeCmd(name, args string) (tea.Model, tea.Cmd) {
 		m.chat.AddSystemMessage("Compacting conversation...")
 		return m, m.runCompaction()
 
+	case "resume":
+		return m.handleResume(args)
+
 	}
 
 	m.chat.AddSystemMessage("Unknown command: " + name)
@@ -477,6 +487,97 @@ func (m *AppModel) runCompaction() tea.Cmd {
 		before, after, err := a.Compact(ctx)
 		return CompactionDoneMsg{Before: before, After: after, Err: err}
 	}
+}
+
+// checkAutoResume looks for a recent session for the current project
+// and shows a hint to the user if one exists.
+func (m *AppModel) checkAutoResume() {
+	if m.session == nil {
+		return
+	}
+	recent := session.FindRecentSession(m.session.ProjectDir)
+	if recent != nil && recent.ID != m.session.ID {
+		summary := recent.Summary
+		if len(summary) > 60 {
+			summary = summary[:60] + "..."
+		}
+		m.chat.AddSystemMessage(fmt.Sprintf(
+			"Previous session found: %s (%s)\nUse /resume %s to continue it.",
+			summary, recent.UpdatedAt.Format("2006-01-02 15:04"), recent.ID))
+	}
+}
+
+// handleResume implements the /resume command.
+// With no args: lists recent sessions. With an ID: loads that session.
+func (m AppModel) handleResume(args string) (tea.Model, tea.Cmd) {
+	if args == "" {
+		// List recent sessions
+		sessions, err := session.ListSessions()
+		if err != nil {
+			m.chat.AddSystemMessage("Error listing sessions: " + err.Error())
+			return m, nil
+		}
+		if len(sessions) == 0 {
+			m.chat.AddSystemMessage("No saved sessions found.")
+			return m, nil
+		}
+
+		limit := 10
+		if len(sessions) < limit {
+			limit = len(sessions)
+		}
+
+		var lines []string
+		lines = append(lines, "Recent sessions:")
+		for _, s := range sessions[:limit] {
+			dir := s.ProjectDir
+			if home, err := filepath.Abs(s.ProjectDir); err == nil {
+				dir = home
+			}
+			summary := s.Summary
+			if len(summary) > 60 {
+				summary = summary[:60] + "..."
+			}
+			lines = append(lines, fmt.Sprintf("  %s  %s  %s  %s",
+				s.ID, s.UpdatedAt.Format("2006-01-02 15:04"), dir, summary))
+		}
+		lines = append(lines, "")
+		lines = append(lines, "Use /resume <id> to load a session.")
+		m.chat.AddSystemMessage(strings.Join(lines, "\n"))
+		return m, nil
+	}
+
+	// Load a specific session by ID
+	sessionPath := filepath.Join(session.SessionDir(), args+".json")
+	sess, err := session.Load(sessionPath)
+	if err != nil {
+		m.chat.AddSystemMessage("Error loading session: " + err.Error())
+		return m, nil
+	}
+
+	// Save current session before switching
+	m.saveSession()
+
+	// Replace session and restore history
+	*m.session = *sess
+	if m.agent != nil {
+		m.agent.LoadSession(sess.Messages)
+	}
+
+	// Rebuild chat view from loaded messages
+	m.chat = NewChatModel()
+	m.layout()
+	chatMsgs := MessagesToChat(sess.Messages)
+	m.chat.LoadMessages(chatMsgs)
+	m.chat.AddSystemMessage(fmt.Sprintf("Resumed session %s", sess.ID))
+
+	// Update status bar with token estimate
+	if m.agent != nil {
+		tokens := m.agent.EstimateCurrentTokens()
+		m.statusBar, _ = m.statusBar.Update(StatusUpdateMsg{Tokens: tokens})
+	}
+
+	return m, nil
 }
 
 // saveSession persists the current session to disk.
