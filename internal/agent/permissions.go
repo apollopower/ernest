@@ -54,18 +54,31 @@ func NewPermissionChecker(claudeCfg *config.ClaudeConfig) *PermissionChecker {
 	return pc
 }
 
+// addAllowed/addDenied must be called with p.mu held (or during construction).
 func (p *PermissionChecker) addAllowed(entry string) {
-	p.allowedTools = append(p.allowedTools, entry)
 	if !strings.Contains(entry, "(") {
 		p.allowedExact[entry] = true
+	} else if !isValidPatternEntry(entry) {
+		log.Printf("[permissions] skipping malformed allowed entry: %q", entry)
+		return
 	}
+	p.allowedTools = append(p.allowedTools, entry)
 }
 
 func (p *PermissionChecker) addDenied(entry string) {
-	p.deniedTools = append(p.deniedTools, entry)
 	if !strings.Contains(entry, "(") {
 		p.deniedExact[entry] = true
+	} else if !isValidPatternEntry(entry) {
+		log.Printf("[permissions] skipping malformed denied entry: %q", entry)
+		return
 	}
+	p.deniedTools = append(p.deniedTools, entry)
+}
+
+// isValidPatternEntry checks that a "tool(pattern)" entry is well-formed.
+func isValidPatternEntry(entry string) bool {
+	parenIdx := strings.Index(entry, "(")
+	return parenIdx > 0 && strings.HasSuffix(entry, ")")
 }
 
 // Check returns the permission for a given tool invocation.
@@ -106,32 +119,43 @@ func (p *PermissionChecker) Check(toolName string, toolInput json.RawMessage) Pe
 
 // Allow adds a permission entry to the in-memory allowed list.
 // entry can be "bash", "bash(git pull)", "bash(git *)", etc.
+// Deduplicates: no-op if the entry already exists.
 func (p *PermissionChecker) Allow(entry string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	// Check for duplicate
+	for _, e := range p.allowedTools {
+		if e == entry {
+			return
+		}
+	}
 	p.addAllowed(entry)
 }
 
 // PermissionKey builds the permission entry string for a tool invocation.
 // For bash: "bash(command)". For other tools: just the tool name.
+// PermissionKey builds the permission entry string for a tool invocation.
+// For bash: "bash(command)". Returns empty string if the command can't be
+// extracted — callers should skip persisting in that case to avoid saving
+// an overly broad "bash" allow-all entry.
 func PermissionKey(toolName string, toolInput json.RawMessage) string {
 	if toolName == "bash" {
 		var input struct {
 			Command string `json:"command"`
 		}
-		if json.Unmarshal(toolInput, &input) == nil && input.Command != "" {
-			return "bash(" + input.Command + ")"
+		if err := json.Unmarshal(toolInput, &input); err != nil || strings.TrimSpace(input.Command) == "" {
+			return "" // don't fall back to plain "bash"
 		}
+		return "bash(" + input.Command + ")"
 	}
 	return toolName
 }
 
 // matchPermission checks if a permission entry matches a tool invocation.
 func matchPermission(entry, toolName string, toolInput json.RawMessage) bool {
-	// Parse "tool(pattern)" format
+	// Parse "tool(pattern)" format — validated on load, so this should always pass
 	parenIdx := strings.Index(entry, "(")
 	if parenIdx < 0 || !strings.HasSuffix(entry, ")") {
-		log.Printf("[permissions] malformed permission entry: %q", entry)
 		return false
 	}
 

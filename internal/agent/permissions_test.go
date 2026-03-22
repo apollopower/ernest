@@ -172,6 +172,24 @@ func TestPermissionKey_Bash(t *testing.T) {
 	}
 }
 
+func TestPermissionKey_BashEmptyCommand(t *testing.T) {
+	// Should return empty — don't fall back to plain "bash"
+	key := PermissionKey("bash", json.RawMessage(`{}`))
+	if key != "" {
+		t.Errorf("expected empty key for missing command, got %q", key)
+	}
+
+	key = PermissionKey("bash", json.RawMessage(`{"command": ""}`))
+	if key != "" {
+		t.Errorf("expected empty key for empty command, got %q", key)
+	}
+
+	key = PermissionKey("bash", nil)
+	if key != "" {
+		t.Errorf("expected empty key for nil input, got %q", key)
+	}
+}
+
 func TestPermissionKey_NonBash(t *testing.T) {
 	input := json.RawMessage(`{"file_path": "/tmp/test.txt"}`)
 	key := PermissionKey("write_file", input)

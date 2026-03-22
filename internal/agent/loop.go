@@ -271,16 +271,19 @@ func (a *Agent) ResolveTool(toolUseID string, approved bool) {
 // Persistence happens before unblocking the agent to ensure the file is written
 // before the tool starts executing.
 func (a *Agent) AllowToolAlways(toolUseID, toolName, toolInput string) error {
-	// Build granular permission key: "bash(git pull)" for bash, "write_file" for others
+	// Build granular permission key: "bash(git pull)" for bash, "write_file" for others.
+	// Empty key means we couldn't extract the command — still approve this call
+	// but don't persist a broad permission.
 	permKey := PermissionKey(toolName, json.RawMessage(toolInput))
-	a.permissions.Allow(permKey)
 
-	// Persist to disk. Even if this fails, always unblock the agent loop
-	// so the TUI doesn't hang.
 	var persistErr error
-	if a.claudeCfg != nil && a.claudeCfg.ProjectDir != "" {
-		if err := config.SaveAllowedTool(a.claudeCfg.ProjectDir, permKey); err != nil {
-			persistErr = err
+	if permKey != "" {
+		a.permissions.Allow(permKey)
+
+		if a.claudeCfg != nil && a.claudeCfg.ProjectDir != "" {
+			if err := config.SaveAllowedTool(a.claudeCfg.ProjectDir, permKey); err != nil {
+				persistErr = err
+			}
 		}
 	}
 

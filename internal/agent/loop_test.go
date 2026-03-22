@@ -681,7 +681,7 @@ func TestAgent_AllowToolAlways(t *testing.T) {
 
 	// Second run: same command should NOT get confirmation (granular permission)
 	gotConfirm = false
-	for evt := range a.Run(context.Background(), "Run echo second") {
+	for evt := range a.Run(context.Background(), "Run echo first again") {
 		if evt.Type == "tool_confirm" {
 			gotConfirm = true
 		}
