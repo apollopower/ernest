@@ -1,7 +1,7 @@
 # Context Compaction and Session Persistence
 
 ## Date: 2026-03-21
-## Status: Draft
+## Status: Complete
 ## GitHub Issue: #9
 
 ---
@@ -354,9 +354,9 @@ This plan does **NOT** include:
 - [ ] Verify: end-to-end compaction with real API
 
 ### Phase 3: Session Resume
-- [ ] Implement `/resume` command (list + load)
-- [ ] Implement `Agent.LoadSession()` for restoring history
-- [ ] Implement `MessagesToChat()` conversion for populating TUI from loaded session
-- [ ] Add auto-resume prompt on startup
-- [ ] Write session resume tests (including nonexistent ID, short conversations)
-- [ ] Verify: full session lifecycle end-to-end
+- [x] Implement `/resume` command (list + load)
+- [x] Implement `Agent.LoadSession()` for restoring history
+- [x] Implement `MessagesToChat()` conversion for populating TUI from loaded session
+- [x] Add auto-resume prompt on startup
+- [x] Write session resume tests (including nonexistent ID, short conversations)
+- [x] Verify: full session lifecycle end-to-end
