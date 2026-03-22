@@ -4,6 +4,7 @@ import (
 	"ernest/internal/agent"
 	"ernest/internal/config"
 	"ernest/internal/provider"
+	"ernest/internal/session"
 	"ernest/internal/tools"
 	"ernest/internal/tui"
 	"fmt"
@@ -72,12 +73,19 @@ func main() {
 	cooldown := time.Duration(cfg.CooldownSeconds) * time.Second
 	router := provider.NewRouter(providers, cooldown)
 	a := agent.New(router, registry, claudeCfg)
+	sess := session.New(cwd)
 
-	app := tui.NewAppModel(cfg, claudeCfg, a)
+	app := tui.NewAppModel(cfg, claudeCfg, a, sess)
 	p := tea.NewProgram(app, tea.WithAltScreen())
 
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
+	}
+
+	// Auto-save session on exit
+	sess.SetMessages(a.History())
+	if err := sess.Save(); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to save session: %v\n", err)
 	}
 }
