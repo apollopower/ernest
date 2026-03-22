@@ -4,7 +4,10 @@ import (
 	"context"
 	"ernest/internal/agent"
 	"ernest/internal/config"
+	"ernest/internal/session"
+	"fmt"
 	"log"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -22,6 +25,8 @@ type AppModel struct {
 	input          InputModel
 	statusBar      StatusModel
 	agent          *agent.Agent
+	session        *session.Session
+	cfg            config.Config
 	confirmDialog  *ToolConfirmModel
 	focused        bool   // true = input focused, false = vim nav mode
 	streaming      bool   // true while agent is streaming a response
@@ -35,7 +40,7 @@ type AppModel struct {
 	agentCh        <-chan agent.AgentEvent
 }
 
-func NewAppModel(cfg config.Config, claudeCfg *config.ClaudeConfig, a *agent.Agent) AppModel {
+func NewAppModel(cfg config.Config, claudeCfg *config.ClaudeConfig, a *agent.Agent, sess *session.Session) AppModel {
 	primary := cfg.PrimaryProvider()
 
 	return AppModel{
@@ -43,6 +48,8 @@ func NewAppModel(cfg config.Config, claudeCfg *config.ClaudeConfig, a *agent.Age
 		input:     NewInputModel(),
 		statusBar: NewStatusModel(primary.Name, primary.Model, cfg.MaxContextTokens),
 		agent:     a,
+		session:   sess,
+		cfg:       cfg,
 		focused:   true, // start with input focused
 	}
 }
@@ -83,6 +90,18 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.streaming || m.confirming {
 			return m, nil // ignore input while streaming or confirming
 		}
+
+		// Slash command detection: /command args
+		if strings.HasPrefix(msg.Text, "/") {
+			parts := strings.SplitN(msg.Text[1:], " ", 2)
+			name := parts[0]
+			args := ""
+			if len(parts) > 1 {
+				args = parts[1]
+			}
+			return m.executeCmd(name, args)
+		}
+
 		if m.agent == nil {
 			m.chat.AddMessage("user", msg.Text)
 			m.chat.AddMessage("assistant", "[error: no provider configured]")
@@ -308,10 +327,16 @@ func (m AppModel) handleVimNav(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m AppModel) handleCmdMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
 	case tea.KeyEnter:
-		cmd := m.pendingCmd
+		cmdStr := m.pendingCmd
 		m.cmdMode = false
 		m.pendingCmd = ""
-		return m.executeCmd(cmd)
+		parts := strings.SplitN(cmdStr, " ", 2)
+		name := parts[0]
+		args := ""
+		if len(parts) > 1 {
+			args = parts[1]
+		}
+		return m.executeCmd(name, args)
 	case tea.KeyBackspace:
 		if len(m.pendingCmd) > 0 {
 			m.pendingCmd = m.pendingCmd[:len(m.pendingCmd)-1]
@@ -320,17 +345,70 @@ func (m AppModel) handleCmdMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.cmdMode = false
 		}
 	default:
-		m.pendingCmd += msg.String()
+		if msg.Type == tea.KeyRunes {
+			m.pendingCmd += msg.String()
+		}
 	}
 	return m, nil
 }
 
-func (m AppModel) executeCmd(cmd string) (tea.Model, tea.Cmd) {
-	switch cmd {
+func (m AppModel) executeCmd(name, args string) (tea.Model, tea.Cmd) {
+	switch name {
 	case "q", "quit":
+		// Session is auto-saved in main.go on exit — no need to save here
 		return m, tea.Quit
+
+	case "status":
+		primary := m.cfg.PrimaryProvider()
+		tokenCount := 0
+		if m.session != nil {
+			tokenCount = m.session.TokenCount
+		}
+		sessionID := "none"
+		if m.session != nil {
+			sessionID = m.session.ID
+		}
+		status := fmt.Sprintf("Provider: %s | Model: %s | Tokens: %d/%d | Session: %s",
+			primary.Name, primary.Model, tokenCount, m.cfg.MaxContextTokens, sessionID)
+		m.chat.AddSystemMessage(status)
+		return m, nil
+
+	case "save":
+		if err := m.saveSession(); err != nil {
+			m.chat.AddSystemMessage("Error saving session: " + err.Error())
+		} else {
+			m.chat.AddSystemMessage("Session saved.")
+		}
+		return m, nil
+
+	case "clear":
+		// Save current session before clearing
+		m.saveSession()
+		m.chat = NewChatModel()
+		m.chat.SetSize(m.width, m.height-6) // reapply layout
+		if m.session != nil {
+			m.session = session.New(m.session.ProjectDir)
+		}
+		if m.agent != nil {
+			m.agent.ClearHistory()
+		}
+		m.chat.AddSystemMessage("Conversation cleared.")
+		return m, nil
 	}
+
+	m.chat.AddSystemMessage("Unknown command: " + name)
 	return m, nil
+}
+
+// saveSession persists the current session to disk.
+func (m *AppModel) saveSession() error {
+	if m.session == nil {
+		return nil
+	}
+	if m.agent != nil {
+		m.session.SetMessages(m.agent.History())
+	}
+	return m.session.Save()
 }
 
 func (m *AppModel) layout() {

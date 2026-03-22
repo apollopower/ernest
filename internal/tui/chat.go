@@ -107,6 +107,14 @@ func (m *ChatModel) FinalizeMessage() {
 	m.viewport.GotoBottom()
 }
 
+// AddSystemMessage adds a system message to the chat. System messages are
+// for command output and are NOT saved to session history.
+func (m *ChatModel) AddSystemMessage(content string) {
+	m.messages = append(m.messages, ChatMessage{Role: "system", Content: content})
+	m.renderMessages()
+	m.viewport.GotoBottom()
+}
+
 // FinalizeOrRemoveEmpty finalizes the last message if it has content,
 // or removes it if it's an empty streaming placeholder. This prevents
 // blank lines between consecutive tool calls.
@@ -220,6 +228,9 @@ func (m *ChatModel) renderMessages() {
 			label := toolLabelStyle.Render("[" + msg.ToolName + " result]")
 			content := toolContentStyle.Render(msg.Content)
 			lines = append(lines, label+"\n"+content)
+		case "system":
+			content := helpStyle.Render(msg.Content)
+			lines = append(lines, content)
 		}
 	}
 

@@ -61,6 +61,22 @@ func New(router *provider.Router, registry *tools.Registry, claudeCfg *config.Cl
 	}
 }
 
+// History returns a copy of the conversation history.
+func (a *Agent) History() []provider.Message {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	history := make([]provider.Message, len(a.history))
+	copy(history, a.history)
+	return history
+}
+
+// ClearHistory resets the conversation history.
+func (a *Agent) ClearHistory() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.history = nil
+}
+
 // ResolveTool sends a tool confirmation decision to the agent loop.
 // Called by the TUI when the user approves or denies a tool use.
 // Non-blocking: if the agent is no longer waiting (e.g., cancelled), the
