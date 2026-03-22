@@ -138,3 +138,25 @@ func TestSaveAllowedTool_CorruptJSON(t *testing.T) {
 		t.Fatal("expected error for corrupt JSON")
 	}
 }
+
+func TestSaveAllowedTool_UnreadableFile(t *testing.T) {
+	dir := t.TempDir()
+	claudeDir := filepath.Join(dir, ".claude")
+	if err := os.MkdirAll(claudeDir, 0o755); err != nil {
+		t.Fatalf("failed to create .claude dir: %v", err)
+	}
+
+	// Create an unreadable file (write-only permissions)
+	path := filepath.Join(claudeDir, "settings.local.json")
+	if err := os.WriteFile(path, []byte(`{"existing": true}`), 0o000); err != nil {
+		t.Fatalf("failed to write file: %v", err)
+	}
+
+	err := SaveAllowedTool(dir, "bash")
+	if err == nil {
+		t.Fatal("expected error for unreadable file")
+	}
+
+	// Restore permissions for cleanup
+	os.Chmod(path, 0o644)
+}

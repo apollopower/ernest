@@ -690,3 +690,55 @@ func TestAgent_AllowToolAlways(t *testing.T) {
 		t.Error("should NOT get tool_confirm after AllowToolAlways")
 	}
 }
+
+func TestExtractToolCalls_NilInput(t *testing.T) {
+	msg := provider.Message{
+		Role: provider.RoleAssistant,
+		Content: []provider.ContentBlock{
+			{Type: "tool_use", ToolUseID: "c1", ToolName: "test", ToolInput: nil},
+		},
+	}
+	calls := extractToolCalls(msg)
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 call, got %d", len(calls))
+	}
+	if calls[0].ToolInput != "{}" {
+		t.Errorf("expected '{}' for nil input, got %q", calls[0].ToolInput)
+	}
+}
+
+func TestExtractToolCalls_StringInput(t *testing.T) {
+	// Simulates the fallback path where consumeStream stores raw JSON string
+	// on parse failure
+	msg := provider.Message{
+		Role: provider.RoleAssistant,
+		Content: []provider.ContentBlock{
+			{Type: "tool_use", ToolUseID: "c1", ToolName: "test", ToolInput: `{"key": "value"}`},
+		},
+	}
+	calls := extractToolCalls(msg)
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 call, got %d", len(calls))
+	}
+	// Should use string directly, not double-encode
+	if calls[0].ToolInput != `{"key": "value"}` {
+		t.Errorf("expected raw JSON string, got %q", calls[0].ToolInput)
+	}
+}
+
+func TestExtractToolCalls_MapInput(t *testing.T) {
+	// Normal path: consumeStream unmarshals into map[string]any
+	msg := provider.Message{
+		Role: provider.RoleAssistant,
+		Content: []provider.ContentBlock{
+			{Type: "tool_use", ToolUseID: "c1", ToolName: "test", ToolInput: map[string]any{"file_path": "/tmp/x"}},
+		},
+	}
+	calls := extractToolCalls(msg)
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 call, got %d", len(calls))
+	}
+	if calls[0].ToolInput != `{"file_path":"/tmp/x"}` {
+		t.Errorf("expected marshaled JSON, got %q", calls[0].ToolInput)
+	}
+}
