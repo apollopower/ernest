@@ -35,7 +35,7 @@ Implement in three phases:
 ### Credentials File (`~/.config/ernest/credentials.yaml`)
 
 ```yaml
-# Machine-wide credentials — follows you everywhere.
+# Machine-wide credentials — shared across all shells on this machine, not synced between devices.
 # File permissions: 0600 (owner read/write only).
 # Contains ONLY secrets — no config like base_url or model.
 providers:
@@ -141,7 +141,7 @@ func (c *Credentials) Remove(providerName string)
 
 File: `~/.config/ernest/credentials.yaml`, permissions `0600`.
 
-**Atomic writes:** `SaveCredentials` writes to a temp file in the same directory, then `os.Rename` to the target path. Rename is atomic on POSIX filesystems. This prevents credential loss on crash mid-write.
+**Atomic writes:** `SaveCredentials` writes to a temp file in the same directory, then `os.Rename` to the target path. On POSIX, `rename(2)` is atomic. On Windows, `os.Rename` replaces the destination file; crash/power-loss guarantees may differ from POSIX but are sufficient for this use case. File permissions `0600` are enforced on POSIX; on Windows, the file relies on the OS's default per-user ACLs in the user config directory.
 
 ---
 
@@ -251,8 +251,9 @@ Update provider creation to:
 #### Step 1.5: First-Launch Experience
 
 If no providers have API keys (neither env vars nor credentials):
-- TUI: show system message "No providers configured. Use /provider add to get started."
+- TUI: show system message "No providers configured. Set ANTHROPIC_API_KEY or edit ~/.config/ernest/credentials.yaml to get started."
 - Headless: print to stderr and exit 1
+- Phase 2 upgrades this message to reference `/provider add`
 
 #### Step 1.6: Tests for Phase 1
 
@@ -318,13 +319,13 @@ Called by TUI after `/provider add`, `/provider remove`, `/provider order`, or `
 
 Remove provider from config.yaml and credentials.yaml. Confirm before removing.
 
-#### Step 2.5: `/model <provider> <model>` Command
+#### Step 2.6: `/model <provider> <model>` Command
 
 Switch the model for a specific provider. Example: `/model anthropic claude-sonnet-4-6` or `/model siliconflow deepseek-ai/DeepSeek-V3`. Updates config.yaml. Takes effect on next prompt (no restart).
 
 The provider name is required to avoid ambiguity in multi-provider setups.
 
-#### Step 2.6: Tests for Phase 2
+#### Step 2.7: Tests for Phase 2
 
 - Gemini provider: message conversion, streaming
 - `/providers` output format
