@@ -366,3 +366,45 @@ func TestLoad_NonexistentID(t *testing.T) {
 		t.Error("expected error for nonexistent session")
 	}
 }
+
+func TestLoadByID_Valid(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("APPDATA", dir)
+	t.Setenv("HOME", dir)
+
+	s := New("/project")
+	if err := s.Save(); err != nil {
+		t.Fatalf("failed to save: %v", err)
+	}
+
+	loaded, err := LoadByID(s.ID)
+	if err != nil {
+		t.Fatalf("failed to load by ID: %v", err)
+	}
+	if loaded.ID != s.ID {
+		t.Errorf("expected ID %s, got %s", s.ID, loaded.ID)
+	}
+}
+
+func TestLoadByID_InvalidFormat(t *testing.T) {
+	tests := []struct {
+		name string
+		id   string
+	}{
+		{"too short", "abc"},
+		{"too long", "abcdef1234"},
+		{"non-hex", "ghijklmn"},
+		{"path traversal", "../../etc"},
+		{"with slash", "abc/defg"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := LoadByID(tt.id)
+			if err == nil {
+				t.Errorf("expected error for ID %q", tt.id)
+			}
+		})
+	}
+}
