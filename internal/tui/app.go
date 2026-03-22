@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -476,6 +477,13 @@ func isKnownCommand(name string) bool {
 	return knownCommands[name]
 }
 
+// isValidSessionID checks that the ID is 8 hex characters (no path traversal).
+var validSessionID = regexp.MustCompile(`^[0-9a-f]{8}$`)
+
+func isValidSessionID(id string) bool {
+	return validSessionID.MatchString(id)
+}
+
 // runCompaction returns a tea.Cmd that runs compaction in a goroutine
 // and sends a CompactionDoneMsg when complete. Uses cancelStream context
 // so Ctrl+C can abort compaction.
@@ -510,6 +518,7 @@ func (m *AppModel) checkAutoResume() {
 // handleResume implements the /resume command.
 // With no args: lists recent sessions. With an ID: loads that session.
 func (m AppModel) handleResume(args string) (tea.Model, tea.Cmd) {
+	args = strings.TrimSpace(args)
 	if args == "" {
 		// List recent sessions
 		sessions, err := session.ListSessions()
@@ -547,6 +556,12 @@ func (m AppModel) handleResume(args string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Validate session ID: must be 8 hex chars (no path traversal)
+	if !isValidSessionID(args) {
+		m.chat.AddSystemMessage("Invalid session ID: " + args)
+		return m, nil
+	}
+
 	// Load a specific session by ID
 	sessionPath := filepath.Join(session.SessionDir(), args+".json")
 	sess, err := session.Load(sessionPath)
@@ -555,8 +570,11 @@ func (m AppModel) handleResume(args string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Save current session before switching
-	m.saveSession()
+	// Save current session before switching — abort if save fails
+	if err := m.saveSession(); err != nil {
+		m.chat.AddSystemMessage("Error saving current session: " + err.Error())
+		return m, nil
+	}
 
 	// Replace session and restore history
 	*m.session = *sess

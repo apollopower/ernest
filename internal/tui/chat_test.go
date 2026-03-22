@@ -2,6 +2,7 @@ package tui
 
 import (
 	"ernest/internal/provider"
+	"strings"
 	"testing"
 )
 
@@ -121,20 +122,7 @@ func TestMessagesToChat_LongToolResult(t *testing.T) {
 	if len(result) != 1 {
 		t.Fatalf("expected 1 message, got %d", len(result))
 	}
-	if !contains(result[0].Content, "truncated") {
+	if !strings.Contains(result[0].Content, "truncated") {
 		t.Error("expected truncated indicator for long tool result")
 	}
-}
-
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && searchString(s, substr)
-}
-
-func searchString(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }

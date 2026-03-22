@@ -23,6 +23,9 @@ type ChatMessage struct {
 // multiple ChatMessages.
 func MessagesToChat(msgs []provider.Message) []ChatMessage {
 	var result []ChatMessage
+	// Track tool_use ID → name for labeling tool_result messages
+	toolNames := make(map[string]string)
+
 	for _, msg := range msgs {
 		for _, block := range msg.Content {
 			switch block.Type {
@@ -34,8 +37,20 @@ func MessagesToChat(msgs []provider.Message) []ChatMessage {
 				result = append(result, ChatMessage{Role: role, Content: block.Text})
 
 			case "tool_use":
-				inputJSON, _ := json.Marshal(block.ToolInput)
-				display := string(inputJSON)
+				toolNames[block.ToolUseID] = block.ToolName
+				// Handle ToolInput type variants to avoid double-encoding
+				var display string
+				switch v := block.ToolInput.(type) {
+				case nil:
+					display = "{}"
+				case string:
+					display = v
+				case json.RawMessage:
+					display = string(v)
+				default:
+					b, _ := json.Marshal(v)
+					display = string(b)
+				}
 				if len(display) > 200 {
 					display = display[:200] + "..."
 				}
@@ -51,9 +66,10 @@ func MessagesToChat(msgs []provider.Message) []ChatMessage {
 				if len(lines) > 50 {
 					content = strings.Join(lines[:50], "\n") + "\n... (truncated)"
 				}
-				// Try to find the tool name from the ToolUseID — not always available,
-				// so fall back to generic label
-				toolName := "tool"
+				toolName := toolNames[block.ToolUseID]
+				if toolName == "" {
+					toolName = "tool"
+				}
 				result = append(result, ChatMessage{
 					Role:     "tool_result",
 					ToolName: toolName,
