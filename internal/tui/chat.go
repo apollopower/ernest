@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/glamour"
+	"github.com/charmbracelet/lipgloss"
 )
 
 type ChatMessage struct {
@@ -273,9 +274,8 @@ func (m *ChatModel) renderMessages() {
 
 	var lines []string
 
-	if len(m.messages) == 0 {
-		welcome := helpStyle.Render("Welcome to Ernest. Type a message to get started.")
-		lines = append(lines, "", welcome, "")
+	if !m.hasUserMessages() {
+		lines = append(lines, m.renderHomeScreen()...)
 	}
 
 	for i, msg := range m.messages {
@@ -307,6 +307,114 @@ func (m *ChatModel) renderMessages() {
 	}
 
 	m.viewport.SetContent(strings.Join(lines, "\n"))
+}
+
+// renderHomeScreen returns the centered home screen for an empty chat.
+func (m *ChatModel) renderHomeScreen() []string {
+	titleStyle := lipgloss.NewStyle().
+		Foreground(highlight).
+		Bold(true)
+
+	taglineStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.AdaptiveColor{Light: "#969B86", Dark: "#AAAAAA"}).
+		Italic(true)
+
+	cmdStyle := lipgloss.NewStyle().
+		Foreground(special).
+		Bold(true)
+
+	descStyle := lipgloss.NewStyle().
+		Foreground(muted)
+
+	// ASCII art title
+	asciiTitle := []string{
+		"┌─┐┌─┐┌┐┌┌─┐┌─┐┌┬┐",
+		"├┤ ├┬┘│││├┤ └─┐ │ ",
+		"└─┘┴└─┘└┘└─┘└─┘ ┴ ",
+	}
+
+	var titleLines []string
+	for _, line := range asciiTitle {
+		titleLines = append(titleLines, "     "+titleStyle.Render(line))
+	}
+	title := strings.Join(titleLines, "\n")
+	tagline := taglineStyle.Render("Write code. Cut the rest.")
+
+	commands := []struct{ cmd, desc string }{
+		{"/model", "Switch provider"},
+		{"/resume", "Continue a session"},
+		{"/providers", "Show connections"},
+		{"/status", "Session info"},
+	}
+
+	var cmdLines []string
+	for _, c := range commands {
+		cmdLines = append(cmdLines,
+			"     "+cmdStyle.Render(padRight(c.cmd, 14))+descStyle.Render(c.desc))
+	}
+
+	// Assemble with spacing
+	var content []string
+	content = append(content, "")
+	content = append(content, title)
+	content = append(content, "")
+	content = append(content, "     "+tagline)
+	content = append(content, "")
+	content = append(content, cmdLines...)
+	content = append(content, "")
+
+	// Draw border
+	boxWidth := 42
+	border := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(subtle).
+		Width(boxWidth).
+		Padding(0, 1)
+
+	boxContent := strings.Join(content, "\n")
+	box := border.Render(boxContent)
+
+	// Center vertically in the viewport
+	boxLines := strings.Split(box, "\n")
+	topPad := (m.height - len(boxLines)) / 3
+	if topPad < 1 {
+		topPad = 1
+	}
+
+	var result []string
+	for i := 0; i < topPad; i++ {
+		result = append(result, "")
+	}
+
+	// Center horizontally
+	for _, line := range boxLines {
+		lineWidth := lipgloss.Width(line)
+		leftPad := (m.width - lineWidth) / 2
+		if leftPad < 0 {
+			leftPad = 0
+		}
+		result = append(result, strings.Repeat(" ", leftPad)+line)
+	}
+
+	return result
+}
+
+// hasUserMessages returns true if there are any non-system messages.
+func (m *ChatModel) hasUserMessages() bool {
+	for _, msg := range m.messages {
+		if msg.Role != "system" {
+			return true
+		}
+	}
+	return false
+}
+
+// padRight pads a string to the given width with spaces.
+func padRight(s string, width int) string {
+	if len(s) >= width {
+		return s
+	}
+	return s + strings.Repeat(" ", width-len(s))
 }
 
 // renderAssistantContent renders assistant messages. Streaming messages are

@@ -197,9 +197,12 @@ func runTUI(cfg config.Config, claudeCfg *config.ClaudeConfig, a *agent.Agent, s
 		os.Exit(1)
 	}
 
-	// Auto-save session on exit
-	sess.SetMessages(a.History())
-	if err := sess.Save(); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: failed to save session: %v\n", err)
+	// Auto-save session on exit — only if there are messages
+	history := a.History()
+	if len(history) > 0 {
+		sess.SetMessages(history)
+		if err := sess.Save(); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to save session: %v\n", err)
+		}
 	}
 }
