@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"ernest/internal/config"
+	mcppkg "ernest/internal/mcp"
 	"ernest/internal/provider"
 	"ernest/internal/tools"
 	"fmt"
@@ -61,6 +62,7 @@ type Agent struct {
 	mu               sync.Mutex
 	router           *provider.Router
 	registry         *tools.Registry
+	mcpManager       *mcppkg.Manager
 	permissions      *PermissionChecker
 	claudeCfg        *config.ClaudeConfig
 	history          []provider.Message
@@ -84,6 +86,20 @@ func New(router *provider.Router, registry *tools.Registry, claudeCfg *config.Cl
 		maxContextTokens: maxContextTokens,
 		confirmCh:        make(chan ToolDecision, 1),
 	}
+}
+
+// SetMCPManager sets the MCP manager for external tool support.
+func (a *Agent) SetMCPManager(m *mcppkg.Manager) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.mcpManager = m
+}
+
+// MCPManager returns the MCP manager (may be nil).
+func (a *Agent) MCPManager() *mcppkg.Manager {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.mcpManager
 }
 
 // SetMode changes the agent's operating mode at runtime.
@@ -383,7 +399,6 @@ func (a *Agent) Run(ctx context.Context, userPrompt string) <-chan AgentEvent {
 		if a.registry != nil {
 			allDefs := a.registry.ToolDefs()
 			if currentMode == ModePlan {
-				// Filter to read-only tools in plan mode
 				for _, td := range allDefs {
 					if readOnlyTools[td.Name] {
 						toolDefs = append(toolDefs, td)
@@ -391,6 +406,21 @@ func (a *Agent) Run(ctx context.Context, userPrompt string) <-chan AgentEvent {
 				}
 			} else {
 				toolDefs = allDefs
+			}
+		}
+		// Append MCP tools (sorted, namespaced)
+		if a.mcpManager != nil {
+			mcpDefs := a.mcpManager.Tools()
+			if currentMode == ModePlan {
+				// Only include MCP tools with readOnlyHint
+				for _, td := range mcpDefs {
+					serverName, toolName, ok := mcppkg.ParseMCPToolName(td.Name)
+					if ok && a.mcpManager.IsReadOnly(serverName, toolName) {
+						toolDefs = append(toolDefs, td)
+					}
+				}
+			} else {
+				toolDefs = append(toolDefs, mcpDefs...)
 			}
 		}
 
@@ -507,8 +537,48 @@ func (a *Agent) Run(ctx context.Context, userPrompt string) <-chan AgentEvent {
 }
 
 // executeToolWithConfirmation checks permissions, optionally requests user
-// confirmation, and executes the tool.
+// confirmation, and executes the tool. Handles both built-in and MCP tools.
 func (a *Agent) executeToolWithConfirmation(ctx context.Context, tc toolCall, events chan<- AgentEvent) (string, error) {
+	// Check if this is an MCP tool
+	serverName, mcpToolName, isMCP := mcppkg.ParseMCPToolName(tc.ToolName)
+
+	if isMCP {
+		// MCP tool — route through MCP manager
+		if a.mcpManager == nil {
+			return "", fmt.Errorf("unknown tool: %s (no MCP manager)", tc.ToolName)
+		}
+
+		// Defense in depth: plan mode check for MCP tools
+		if a.Mode() == ModePlan && !a.mcpManager.IsReadOnly(serverName, mcpToolName) {
+			return "", fmt.Errorf("tool %s is not available in plan mode", tc.ToolName)
+		}
+
+		// MCP tools always require confirmation (external, untrusted)
+		requiresConfirmation := true
+
+		// Check permissions
+		perm := a.permissions.Check(tc.ToolName, json.RawMessage(tc.ToolInput))
+		if perm == PermissionDenied {
+			return "", fmt.Errorf("tool %s is denied by settings", tc.ToolName)
+		}
+
+		if perm != PermissionAllowed && requiresConfirmation {
+			if err := a.waitForConfirmation(ctx, tc, events); err != nil {
+				return "", err
+			}
+		}
+
+		// Parse arguments and call MCP tool
+		var args map[string]any
+		if tc.ToolInput != "" {
+			if err := json.Unmarshal([]byte(tc.ToolInput), &args); err != nil {
+				return "", fmt.Errorf("invalid tool input JSON for %s: %w", tc.ToolName, err)
+			}
+		}
+		return a.mcpManager.CallTool(ctx, serverName, mcpToolName, args)
+	}
+
+	// Built-in tool — existing logic
 	if a.registry == nil {
 		return "", fmt.Errorf("unknown tool: %s", tc.ToolName)
 	}
@@ -518,47 +588,49 @@ func (a *Agent) executeToolWithConfirmation(ctx context.Context, tc toolCall, ev
 		return "", fmt.Errorf("unknown tool: %s", tc.ToolName)
 	}
 
-	// Defense in depth: reject write tools in plan mode even if model hallucinates them
+	// Defense in depth: reject write tools in plan mode
 	if a.Mode() == ModePlan && !readOnlyTools[tc.ToolName] {
 		return "", fmt.Errorf("tool %s is not available in plan mode", tc.ToolName)
 	}
 
-	// Check permissions (with tool input for granular matching like bash commands)
 	perm := a.permissions.Check(tc.ToolName, json.RawMessage(tc.ToolInput))
 	if perm == PermissionDenied {
 		return "", fmt.Errorf("tool %s is denied by settings", tc.ToolName)
 	}
 
-	// If the tool requires confirmation and isn't auto-allowed, ask the user
 	if perm != PermissionAllowed && tool.RequiresConfirmation(json.RawMessage(tc.ToolInput)) {
-		events <- AgentEvent{
-			Type:      "tool_confirm",
-			ToolName:  tc.ToolName,
-			ToolInput: tc.ToolInput,
-			ToolUseID: tc.ToolUseID,
+		if err := a.waitForConfirmation(ctx, tc, events); err != nil {
+			return "", err
 		}
-
-		// Block until user responds with matching ToolUseID or context is cancelled.
-		// Discard stale decisions from previous tool uses.
-		for {
-			select {
-			case decision := <-a.confirmCh:
-				if decision.ToolUseID != tc.ToolUseID {
-					log.Printf("[agent] discarding stale tool decision: got %s, want %s", decision.ToolUseID, tc.ToolUseID)
-					continue
-				}
-				if !decision.Approved {
-					return "", fmt.Errorf("tool use denied by user")
-				}
-				goto confirmed
-			case <-ctx.Done():
-				return "", fmt.Errorf("cancelled")
-			}
-		}
-	confirmed:
 	}
 
 	return tool.Execute(ctx, json.RawMessage(tc.ToolInput))
+}
+
+// waitForConfirmation blocks until the user approves or denies the tool call.
+func (a *Agent) waitForConfirmation(ctx context.Context, tc toolCall, events chan<- AgentEvent) error {
+	events <- AgentEvent{
+		Type:      "tool_confirm",
+		ToolName:  tc.ToolName,
+		ToolInput: tc.ToolInput,
+		ToolUseID: tc.ToolUseID,
+	}
+
+	for {
+		select {
+		case decision := <-a.confirmCh:
+			if decision.ToolUseID != tc.ToolUseID {
+				log.Printf("[agent] discarding stale tool decision: got %s, want %s", decision.ToolUseID, tc.ToolUseID)
+				continue
+			}
+			if !decision.Approved {
+				return fmt.Errorf("tool use denied by user")
+			}
+			return nil
+		case <-ctx.Done():
+			return fmt.Errorf("cancelled")
+		}
+	}
 }
 
 // consumeStream reads from the provider's stream channel, forwards text events

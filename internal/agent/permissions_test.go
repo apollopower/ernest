@@ -292,6 +292,35 @@ func TestPermissionChecker_AutoApproveRespectsExplicitDeny(t *testing.T) {
 	}
 }
 
+func TestPermissionChecker_NameGlobAllowed(t *testing.T) {
+	pc := NewPermissionChecker(&config.ClaudeConfig{
+		AllowedTools: []string{"mcp__sentry__*"},
+	}, false)
+
+	if pc.Check("mcp__sentry__search_issues", nil) != PermissionAllowed {
+		t.Error("expected mcp__sentry__search_issues to match mcp__sentry__*")
+	}
+	if pc.Check("mcp__sentry__get_issue", nil) != PermissionAllowed {
+		t.Error("expected mcp__sentry__get_issue to match mcp__sentry__*")
+	}
+	if pc.Check("mcp__github__create_pr", nil) != PermissionAsk {
+		t.Error("expected mcp__github__create_pr to NOT match mcp__sentry__*")
+	}
+}
+
+func TestPermissionChecker_NameGlobDenied(t *testing.T) {
+	pc := NewPermissionChecker(&config.ClaudeConfig{
+		DeniedTools: []string{"mcp__*"},
+	}, false)
+
+	if pc.Check("mcp__sentry__search_issues", nil) != PermissionDenied {
+		t.Error("expected all MCP tools denied with mcp__*")
+	}
+	if pc.Check("read_file", nil) != PermissionAsk {
+		t.Error("expected built-in tools unaffected by mcp__* deny")
+	}
+}
+
 func TestPermissionChecker_AutoApproveRespectsGranularDeny(t *testing.T) {
 	pc := NewPermissionChecker(&config.ClaudeConfig{
 		DeniedTools: []string{"bash(rm *)"},
