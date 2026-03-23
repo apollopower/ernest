@@ -78,7 +78,7 @@ func main() {
 
 	// Build providers from config + credentials
 	var providers []provider.Provider
-	for _, pc := range cfg.Providers {
+	for _, pc := range cfg.SortedProviders() {
 		apiKey := pc.ResolveAPIKeyWithCredentials(creds)
 		// Allow empty API key for local providers (e.g., Ollama) with a base_url
 		if apiKey == "" && pc.BaseURL == "" {
