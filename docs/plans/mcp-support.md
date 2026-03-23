@@ -18,11 +18,11 @@ Ernest should be able to connect to the same MCP servers that Claude Code uses, 
 
 Implement in three phases:
 
-**Phase 1** adds the MCP client infrastructure: config loading (`~/.claude.json`, `.mcp.json`), server lifecycle management (spawn stdio servers, connect HTTP servers), and tool discovery. MCP tools are registered alongside built-in tools. Uses the official Go MCP SDK (`github.com/modelcontextprotocol/go-sdk`).
+**Phase 1** adds the MCP client infrastructure and full agent wiring: config loading (`~/.claude.json`, `.mcp.json`), server lifecycle management (spawn stdio servers), tool discovery, and tool call routing through the agent loop. MCP tools are registered alongside built-in tools, require confirmation, and support permission globs. Uses the official Go MCP SDK (`github.com/modelcontextprotocol/go-sdk`). Stdio transport only — HTTP deferred to Phase 3.
 
-**Phase 2** wires MCP tools into the agent loop — MCP tool calls are proxied through the SDK's `session.CallTool`, results fed back to the model. Adds `/mcp` status command.
+**Phase 2** adds UX and observability: `/mcp` status command, `/mcp reconnect`, and friendly display names for MCP tools in the chat view.
 
-**Phase 3** adds HTTP transport for remote MCP servers and the `/mcp add`/`/mcp remove` commands for managing servers from the TUI.
+**Phase 3** adds HTTP transport for remote MCP servers, `/mcp add`/`/mcp remove` commands, and dynamic tool refresh via `notifications/tools/list_changed`.
 
 ---
 
@@ -59,7 +59,7 @@ func LoadMCPConfig(projectDir string) (*MCPConfig, error)
 ```
 The `mcpServers` key wraps the server map. This matches Claude Code's actual format.
 
-**Note:** MCP config is in `~/.claude.json` and `.mcp.json`, NOT in `.claude/settings.json` (that file handles permissions only).
+**Note on config location:** MCP config is in `~/.claude.json` and `.mcp.json`, NOT in `~/.claude/settings.json` or `.claude/settings.json`. This is Claude Code's actual convention — settings files handle permissions/tool approvals, while `~/.claude.json` and `.mcp.json` handle MCP server definitions. Ernest's existing `.claude/settings.json` parsing (for `allowedTools`/`deniedTools`) is unaffected — these are separate concerns at separate paths.
 
 **Config resolution order** (user scope loaded first, project scope overrides on name collision):
 1. `~/.claude.json` → `mcpServers` section (user scope — baseline)
@@ -88,7 +88,7 @@ func NewManager() *Manager
 func (m *Manager) ConnectAll(ctx context.Context, config *MCPConfig) error  // 30s timeout per server
 func (m *Manager) Tools() []provider.ToolDef    // all discovered tools, sorted by name
 func (m *Manager) CallTool(ctx context.Context, serverName, toolName string, args map[string]any) (string, error)
-func (m *Manager) Close()                        // disconnect all servers (SIGTERM → SIGKILL)
+func (m *Manager) Close()                        // disconnect all servers (SDK handles process cleanup)
 func (m *Manager) Reconnect(ctx context.Context, name string) error  // reconnect a single server
 func (m *Manager) Status() []ServerStatus        // for /mcp command
 ```
