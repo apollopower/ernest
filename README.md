@@ -2,6 +2,8 @@
 
 A terse, fast TUI for AI-assisted coding with multi-provider resilience and Claude config compatibility.
 
+![Ernest Home Screen](docs/assets/home-screen.png)
+
 ## What it does
 
 Ernest is a terminal-based AI coding assistant. It connects to LLM providers (Anthropic, OpenAI, Gemini), streams responses in real time, and uses your existing `.claude/` configuration as the source of truth for system prompts, rules, and tool permissions.
