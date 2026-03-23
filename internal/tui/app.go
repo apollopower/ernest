@@ -58,6 +58,8 @@ type AppModel struct {
 	streaming      bool   // true while agent is streaming a response
 	confirming     bool   // true while tool confirmation dialog is visible
 	compacting     bool   // true while context compaction is running
+	reconnecting   bool   // true while MCP reconnect is running
+	cancelReconnect context.CancelFunc
 	initialized    bool   // true after first WindowSizeMsg (auto-resume check)
 	pendingG       bool   // waiting for second 'g' in "gg" sequence
 	width          int
@@ -188,9 +190,10 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case MCPReconnectDoneMsg:
-		if m.cancelStream != nil {
-			m.cancelStream()
-			m.cancelStream = nil
+		m.reconnecting = false
+		if m.cancelReconnect != nil {
+			m.cancelReconnect()
+			m.cancelReconnect = nil
 		}
 		succeeded, failed := 0, 0
 		for _, r := range msg.Results {
@@ -251,6 +254,15 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		// Ctrl+C always takes priority — even during confirmation dialog
 		if msg.Type == tea.KeyCtrlC {
+			if m.reconnecting {
+				if m.cancelReconnect != nil {
+					m.cancelReconnect()
+					m.cancelReconnect = nil
+				}
+				m.reconnecting = false
+				m.chat.AddSystemMessage("Reconnect cancelled.")
+				return m, nil
+			}
 			if m.streaming || m.compacting {
 				if m.cancelStream != nil {
 					m.cancelStream()
@@ -1031,8 +1043,11 @@ func (m AppModel) handleMCP(args string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	parts := strings.SplitN(strings.TrimSpace(args), " ", 2)
-	subCmd := parts[0]
+	parts := strings.Fields(args)
+	subCmd := ""
+	if len(parts) > 0 {
+		subCmd = parts[0]
+	}
 
 	switch subCmd {
 	case "", "status":
@@ -1064,7 +1079,7 @@ func (m AppModel) handleMCP(args string) (tea.Model, tea.Cmd) {
 	case "reconnect":
 		name := ""
 		if len(parts) > 1 {
-			name = strings.TrimSpace(parts[1])
+			name = parts[1]
 		}
 
 		// Collect servers to reconnect
@@ -1086,7 +1101,8 @@ func (m AppModel) handleMCP(args string) (tea.Model, tea.Cmd) {
 
 		m.chat.AddSystemMessage("Reconnecting...")
 		ctx, cancel := context.WithCancel(context.Background())
-		m.cancelStream = cancel
+		m.reconnecting = true
+		m.cancelReconnect = cancel
 		return m, func() tea.Msg {
 			var results []mcpReconnectResult
 			for _, t := range targets {
