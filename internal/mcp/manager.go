@@ -5,6 +5,7 @@ import (
 	"ernest/internal/provider"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/exec"
 	"sort"
@@ -51,18 +52,14 @@ func NewManager() *Manager {
 	}
 }
 
-// ConnectAll connects to all configured stdio MCP servers concurrently.
+// ConnectAll connects to all configured MCP servers (stdio and HTTP) concurrently.
 // Each server gets a 30-second connection timeout. Individual server failures
 // are logged but don't prevent other servers from connecting.
 func (m *Manager) ConnectAll(ctx context.Context, config *MCPConfig) {
 	var wg sync.WaitGroup
 
 	for name, cfg := range config.Servers {
-		// Skip non-stdio servers (HTTP deferred to Phase 3)
-		if cfg.Command == "" {
-			if cfg.URL != "" {
-				log.Printf("[mcp] skipping HTTP server %s (not yet supported)", name)
-			}
+		if cfg.Command == "" && cfg.URL == "" {
 			continue
 		}
 
@@ -86,19 +83,15 @@ func (m *Manager) ConnectAll(ctx context.Context, config *MCPConfig) {
 }
 
 // connectServer establishes a connection to a single MCP server.
+// Supports stdio (Command) and HTTP (URL) transports.
 func (m *Manager) connectServer(ctx context.Context, name string, cfg MCPServerConfig) *serverConnection {
 	conn := &serverConnection{name: name, config: cfg}
 
-	// Build the command
-	cmd := exec.Command(cfg.Command, cfg.Args...)
-	if cfg.Env != nil {
-		cmd.Env = os.Environ()
-		for k, v := range cfg.Env {
-			cmd.Env = append(cmd.Env, k+"="+v)
-		}
+	transport, err := buildTransport(cfg)
+	if err != nil {
+		conn.err = err
+		return conn
 	}
-
-	transport := &mcp.CommandTransport{Command: cmd}
 
 	// Connect with timeout
 	connectCtx, cancel := context.WithTimeout(ctx, connectTimeout)
@@ -128,6 +121,63 @@ func (m *Manager) connectServer(ctx context.Context, name string, cfg MCPServerC
 
 	conn.tools = result.Tools
 	return conn
+}
+
+// buildTransport creates the appropriate MCP transport for the server config.
+func buildTransport(cfg MCPServerConfig) (mcp.Transport, error) {
+	if cfg.Command != "" {
+		// Stdio transport
+		cmd := exec.Command(cfg.Command, cfg.Args...)
+		if cfg.Env != nil {
+			cmd.Env = os.Environ()
+			for k, v := range cfg.Env {
+				cmd.Env = append(cmd.Env, k+"="+v)
+			}
+		}
+		return &mcp.CommandTransport{Command: cmd}, nil
+	}
+
+	if cfg.URL != "" {
+		// HTTP transport — build client with custom headers if needed
+		httpClient := http.DefaultClient
+		if len(cfg.Headers) > 0 {
+			httpClient = &http.Client{
+				Transport: &headerTransport{
+					base:    http.DefaultTransport,
+					headers: cfg.Headers,
+				},
+			}
+		}
+
+		switch strings.ToLower(cfg.Type) {
+		case "sse":
+			return &mcp.SSEClientTransport{
+				Endpoint:   cfg.URL,
+				HTTPClient: httpClient,
+			}, nil
+		default:
+			// "http", "streamable-http", or empty → StreamableClientTransport
+			return &mcp.StreamableClientTransport{
+				Endpoint:   cfg.URL,
+				HTTPClient: httpClient,
+			}, nil
+		}
+	}
+
+	return nil, fmt.Errorf("server has no command or URL configured")
+}
+
+// headerTransport injects custom HTTP headers into every request.
+type headerTransport struct {
+	base    http.RoundTripper
+	headers map[string]string
+}
+
+func (t *headerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	for k, v := range t.headers {
+		req.Header.Set(k, v)
+	}
+	return t.base.RoundTrip(req)
 }
 
 // Tools returns all discovered MCP tool definitions, namespaced and sorted.
@@ -294,6 +344,61 @@ func (m *Manager) Status() []ServerStatus {
 		return statuses[i].Name < statuses[j].Name
 	})
 	return statuses
+}
+
+// AddServer connects a new MCP server at runtime.
+func (m *Manager) AddServer(ctx context.Context, name string, cfg MCPServerConfig) error {
+	conn := m.connectServer(ctx, name, cfg)
+	m.mu.Lock()
+	m.servers[name] = conn
+	m.mu.Unlock()
+	if conn.err != nil {
+		return conn.err
+	}
+	return nil
+}
+
+// RemoveServer disconnects and removes an MCP server.
+func (m *Manager) RemoveServer(name string) error {
+	m.mu.Lock()
+	conn, ok := m.servers[name]
+	if !ok {
+		m.mu.Unlock()
+		return fmt.Errorf("MCP server %q not found", name)
+	}
+	delete(m.servers, name)
+	m.mu.Unlock()
+
+	if conn.session != nil {
+		conn.session.Close()
+	}
+	return nil
+}
+
+// RefreshTools re-fetches the tool list for a server (e.g., after tools/list_changed).
+func (m *Manager) RefreshTools(ctx context.Context, name string) error {
+	m.mu.RLock()
+	conn, ok := m.servers[name]
+	m.mu.RUnlock()
+
+	if !ok {
+		return fmt.Errorf("MCP server %q not found", name)
+	}
+	if conn.session == nil {
+		return fmt.Errorf("MCP server %q not connected", name)
+	}
+
+	result, err := conn.session.ListTools(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("refresh tools: %w", err)
+	}
+
+	m.mu.Lock()
+	conn.tools = result.Tools
+	m.mu.Unlock()
+
+	log.Printf("[mcp] %s: refreshed (%d tools)", name, len(conn.tools))
+	return nil
 }
 
 // Close disconnects all MCP servers. SDK handles subprocess cleanup.

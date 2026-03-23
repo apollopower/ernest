@@ -85,7 +85,7 @@ func LoadMCPConfig(projectDir string) (*MCPConfig, error) {
 			// Reject names with __ to prevent tool namespacing ambiguity
 			continue
 		}
-		validated[name] = expandServerConfig(srv)
+		validated[name] = ExpandServerConfig(srv)
 	}
 	config.Servers = validated
 
@@ -140,8 +140,8 @@ func loadMCPFile(path string) (map[string]MCPServerConfig, error) {
 	return file.MCPServers, nil
 }
 
-// expandServerConfig expands ${VAR} and ${VAR:-default} in all string fields.
-func expandServerConfig(srv MCPServerConfig) MCPServerConfig {
+// ExpandServerConfig expands ${VAR} and ${VAR:-default} in all string fields.
+func ExpandServerConfig(srv MCPServerConfig) MCPServerConfig {
 	srv.Command = expandEnvVars(srv.Command)
 	srv.URL = expandEnvVars(srv.URL)
 
@@ -170,6 +170,55 @@ func expandServerConfig(srv MCPServerConfig) MCPServerConfig {
 	}
 
 	return srv
+}
+
+// SaveServerToProjectConfig adds or updates a server in .mcp.json at projectDir.
+// Creates the file if it doesn't exist.
+func SaveServerToProjectConfig(projectDir, name string, cfg MCPServerConfig) error {
+	path := filepath.Join(projectDir, ".mcp.json")
+
+	var file mcpConfigFile
+	if data, err := os.ReadFile(path); err == nil {
+		if err := json.Unmarshal(data, &file); err != nil {
+			return fmt.Errorf("cannot parse %s: %w", path, err)
+		}
+	}
+	if file.MCPServers == nil {
+		file.MCPServers = make(map[string]MCPServerConfig)
+	}
+
+	file.MCPServers[name] = cfg
+	return writeMCPFile(path, &file)
+}
+
+// RemoveServerFromProjectConfig removes a server from .mcp.json at projectDir.
+func RemoveServerFromProjectConfig(projectDir, name string) error {
+	path := filepath.Join(projectDir, ".mcp.json")
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("cannot read %s: %w", path, err)
+	}
+
+	var file mcpConfigFile
+	if err := json.Unmarshal(data, &file); err != nil {
+		return fmt.Errorf("cannot parse %s: %w", path, err)
+	}
+
+	if _, ok := file.MCPServers[name]; !ok {
+		return fmt.Errorf("server %q not found in %s", name, path)
+	}
+
+	delete(file.MCPServers, name)
+	return writeMCPFile(path, &file)
+}
+
+func writeMCPFile(path string, file *mcpConfigFile) error {
+	data, err := json.MarshalIndent(file, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, append(data, '\n'), 0o644)
 }
 
 // expandEnvVars expands ${VAR} and ${VAR:-default} patterns in a string.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"ernest/internal/agent"
 	"ernest/internal/config"
+	mcppkg "ernest/internal/mcp"
 	"ernest/internal/provider"
 	"ernest/internal/session"
 	"fmt"
@@ -1112,10 +1113,96 @@ func (m AppModel) handleMCP(args string) (tea.Model, tea.Cmd) {
 			return MCPReconnectDoneMsg{Results: results}
 		}
 
+	case "add":
+		return m.handleMCPAdd(mgr, parts[1:])
+
+	case "remove":
+		return m.handleMCPRemove(mgr, parts[1:])
+
 	default:
-		m.chat.AddSystemMessage("Usage: /mcp [status|reconnect [name]]")
+		m.chat.AddSystemMessage("Usage: /mcp [status|reconnect|add|remove] ...")
 		return m, nil
 	}
+}
+
+// handleMCPAdd handles /mcp add <name> <command> [args...] or /mcp add --http <name> <url>
+func (m AppModel) handleMCPAdd(mgr *mcppkg.Manager, args []string) (tea.Model, tea.Cmd) {
+	if len(args) < 2 {
+		m.chat.AddSystemMessage("Usage: /mcp add <name> <command> [args...]\n       /mcp add --http <name> <url>")
+		return m, nil
+	}
+
+	projectDir := "."
+	if m.session != nil && m.session.ProjectDir != "" {
+		projectDir = m.session.ProjectDir
+	}
+
+	var name string
+	var cfg mcppkg.MCPServerConfig
+
+	if args[0] == "--http" {
+		if len(args) < 3 {
+			m.chat.AddSystemMessage("Usage: /mcp add --http <name> <url>")
+			return m, nil
+		}
+		name = args[1]
+		cfg = mcppkg.MCPServerConfig{URL: args[2]}
+	} else {
+		name = args[0]
+		cfg = mcppkg.MCPServerConfig{Command: args[1]}
+		if len(args) > 2 {
+			cfg.Args = args[2:]
+		}
+	}
+
+	if strings.Contains(name, "__") {
+		m.chat.AddSystemMessage("Server name cannot contain '__'.")
+		return m, nil
+	}
+
+	// Save to .mcp.json
+	if err := mcppkg.SaveServerToProjectConfig(projectDir, name, cfg); err != nil {
+		m.chat.AddSystemMessage("Error saving config: " + err.Error())
+		return m, nil
+	}
+
+	// Connect the new server
+	m.chat.AddSystemMessage(fmt.Sprintf("Connecting %s...", name))
+	m.reconnecting = true
+	ctx, cancel := context.WithCancel(context.Background())
+	m.cancelReconnect = cancel
+	return m, func() tea.Msg {
+		err := mgr.AddServer(ctx, name, mcppkg.ExpandServerConfig(cfg))
+		return MCPReconnectDoneMsg{Results: []mcpReconnectResult{{Name: name, Err: err}}}
+	}
+}
+
+// handleMCPRemove handles /mcp remove <name>
+func (m AppModel) handleMCPRemove(mgr *mcppkg.Manager, args []string) (tea.Model, tea.Cmd) {
+	if len(args) < 1 {
+		m.chat.AddSystemMessage("Usage: /mcp remove <name>")
+		return m, nil
+	}
+	name := args[0]
+
+	projectDir := "."
+	if m.session != nil && m.session.ProjectDir != "" {
+		projectDir = m.session.ProjectDir
+	}
+
+	// Disconnect the server
+	if err := mgr.RemoveServer(name); err != nil {
+		m.chat.AddSystemMessage(fmt.Sprintf("Warning: %v", err))
+	}
+
+	// Remove from .mcp.json
+	if err := mcppkg.RemoveServerFromProjectConfig(projectDir, name); err != nil {
+		m.chat.AddSystemMessage("Error updating config: " + err.Error())
+		return m, nil
+	}
+
+	m.chat.AddSystemMessage(fmt.Sprintf("Removed %s.", name))
+	return m, nil
 }
 
 // knownCommands is the set of recognized slash/colon commands.

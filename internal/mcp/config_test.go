@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 func writeFile(t *testing.T, path string, data []byte) {
@@ -213,5 +215,133 @@ func TestParseMCPToolName(t *testing.T) {
 			t.Errorf("ParseMCPToolName(%q) = (%q, %q, %v), want (%q, %q, %v)",
 				tt.name, server, tool, ok, tt.wantServer, tt.wantTool, tt.wantOK)
 		}
+	}
+}
+
+func TestSaveServerToProjectConfig_New(t *testing.T) {
+	dir := t.TempDir()
+
+	cfg := MCPServerConfig{Command: "echo", Args: []string{"hello"}}
+	if err := SaveServerToProjectConfig(dir, "test-server", cfg); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify the file was created and is parseable
+	servers, err := loadMCPFile(filepath.Join(dir, ".mcp.json"))
+	if err != nil {
+		t.Fatalf("cannot read saved file: %v", err)
+	}
+	srv, ok := servers["test-server"]
+	if !ok {
+		t.Fatal("expected test-server in saved config")
+	}
+	if srv.Command != "echo" {
+		t.Errorf("expected command 'echo', got %q", srv.Command)
+	}
+}
+
+func TestSaveServerToProjectConfig_Update(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create initial config
+	writeFile(t, filepath.Join(dir, ".mcp.json"), []byte(`{
+		"mcpServers": {
+			"existing": {"command": "old"}
+		}
+	}`))
+
+	// Add new server — should preserve existing
+	cfg := MCPServerConfig{Command: "new-cmd"}
+	if err := SaveServerToProjectConfig(dir, "new-server", cfg); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	servers, err := loadMCPFile(filepath.Join(dir, ".mcp.json"))
+	if err != nil {
+		t.Fatalf("cannot read saved file: %v", err)
+	}
+	if _, ok := servers["existing"]; !ok {
+		t.Error("expected existing server to be preserved")
+	}
+	if _, ok := servers["new-server"]; !ok {
+		t.Error("expected new-server to be added")
+	}
+}
+
+func TestRemoveServerFromProjectConfig(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".mcp.json"), []byte(`{
+		"mcpServers": {
+			"keep": {"command": "a"},
+			"remove": {"command": "b"}
+		}
+	}`))
+
+	if err := RemoveServerFromProjectConfig(dir, "remove"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	servers, err := loadMCPFile(filepath.Join(dir, ".mcp.json"))
+	if err != nil {
+		t.Fatalf("cannot read saved file: %v", err)
+	}
+	if _, ok := servers["keep"]; !ok {
+		t.Error("expected 'keep' to be preserved")
+	}
+	if _, ok := servers["remove"]; ok {
+		t.Error("expected 'remove' to be deleted")
+	}
+}
+
+func TestRemoveServerFromProjectConfig_NotFound(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".mcp.json"), []byte(`{
+		"mcpServers": {"a": {"command": "x"}}
+	}`))
+
+	err := RemoveServerFromProjectConfig(dir, "nonexistent")
+	if err == nil {
+		t.Error("expected error for nonexistent server")
+	}
+}
+
+func TestBuildTransport_Stdio(t *testing.T) {
+	cfg := MCPServerConfig{Command: "echo", Args: []string{"hi"}}
+	transport, err := buildTransport(cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, ok := transport.(*mcpsdk.CommandTransport); !ok {
+		t.Errorf("expected CommandTransport, got %T", transport)
+	}
+}
+
+func TestBuildTransport_HTTP(t *testing.T) {
+	cfg := MCPServerConfig{URL: "http://localhost:8080"}
+	transport, err := buildTransport(cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, ok := transport.(*mcpsdk.StreamableClientTransport); !ok {
+		t.Errorf("expected StreamableClientTransport, got %T", transport)
+	}
+}
+
+func TestBuildTransport_SSE(t *testing.T) {
+	cfg := MCPServerConfig{URL: "http://localhost:8080", Type: "sse"}
+	transport, err := buildTransport(cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, ok := transport.(*mcpsdk.SSEClientTransport); !ok {
+		t.Errorf("expected SSEClientTransport, got %T", transport)
+	}
+}
+
+func TestBuildTransport_NoConfig(t *testing.T) {
+	cfg := MCPServerConfig{}
+	_, err := buildTransport(cfg)
+	if err == nil {
+		t.Error("expected error for empty config")
 	}
 }

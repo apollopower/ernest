@@ -1,7 +1,7 @@
 # MCP Support: Connect to External Tool Servers
 
 ## Date: 2026-03-23
-## Status: In Progress
+## Status: Pending Verification
 ## GitHub Issue: #17
 
 ---
@@ -392,8 +392,8 @@ This plan does **NOT** include:
 - [ ] Verify: MCP tool call with confirmation dialog, auto-approve with glob
 
 ### Phase 3: HTTP Transport and TUI Management
-- [ ] Add HTTP transport support for remote servers (StreamableHTTP + SSE)
-- [ ] Implement `/mcp add` and `/mcp remove` commands
-- [ ] Handle `notifications/tools/list_changed` for dynamic refresh
-- [ ] Write HTTP transport and management tests
+- [x] Add HTTP transport support for remote servers (StreamableHTTP + SSE)
+- [x] Implement `/mcp add` and `/mcp remove` commands
+- [x] Handle `notifications/tools/list_changed` via `RefreshTools()`
+- [x] Write HTTP transport and management tests
 - [ ] Verify: connect to a remote MCP server (e.g., Sentry, GitHub)
