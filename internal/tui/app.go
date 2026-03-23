@@ -741,7 +741,6 @@ func (m AppModel) handlePickerResult(result PickerResult) (tea.Model, tea.Cmd) {
 
 	switch action {
 	case "switch_provider":
-		// Set selected provider to priority 1, bump others
 		m.makeProviderPrimary(result.ID)
 		if err := config.SaveConfig(m.cfg); err != nil {
 			m.chat.AddSystemMessage("Error saving config: " + err.Error())
@@ -750,6 +749,9 @@ func (m AppModel) handlePickerResult(result PickerResult) (tea.Model, tea.Cmd) {
 		m.rebuildRouter()
 		m.chat.AddSystemMessage(fmt.Sprintf("Switched to %s", result.ID))
 		return m, nil
+
+	case "resume_session":
+		return m.loadSessionByID(result.ID)
 	}
 
 	return m, nil
@@ -860,7 +862,7 @@ func (m *AppModel) checkAutoResume() {
 func (m AppModel) handleResume(args string) (tea.Model, tea.Cmd) {
 	args = strings.TrimSpace(args)
 	if args == "" {
-		// List recent sessions
+		// Open picker with recent sessions
 		sessions, err := session.ListSessions()
 		if err != nil {
 			m.chat.AddSystemMessage("Error listing sessions: " + err.Error())
@@ -876,34 +878,35 @@ func (m AppModel) handleResume(args string) (tea.Model, tea.Cmd) {
 			limit = len(sessions)
 		}
 
-		var lines []string
-		lines = append(lines, "Recent sessions:")
+		var items []PickerItem
 		for _, s := range sessions[:limit] {
-			dir := s.ProjectDir
-			if home, err := filepath.Abs(s.ProjectDir); err == nil {
-				dir = home
-			}
 			summary := s.Summary
-			if len(summary) > 60 {
-				summary = summary[:60] + "..."
+			if len(summary) > 50 {
+				summary = summary[:50] + "..."
 			}
-			lines = append(lines, fmt.Sprintf("  %s  %s  %s  %s",
-				s.ID, s.UpdatedAt.Format("2006-01-02 15:04"), dir, summary))
+			label := fmt.Sprintf("%s  %s  %s",
+				s.UpdatedAt.Format("2006-01-02 15:04"), s.ProjectDir, summary)
+			items = append(items, PickerItem{ID: s.ID, Label: label})
 		}
-		lines = append(lines, "")
-		lines = append(lines, "Use /resume <id> to load a session.")
-		m.chat.AddSystemMessage(strings.Join(lines, "\n"))
+
+		picker := NewPickerModel("Resume session", items, m.width)
+		m.picker = &picker
+		m.pickerAction = "resume_session"
 		return m, nil
 	}
 
-	// Validate session ID: must be 8 hex chars (no path traversal)
-	if !isValidSessionID(args) {
-		m.chat.AddSystemMessage("Invalid session ID: " + args)
+	// Direct ID provided
+	return m.loadSessionByID(args)
+}
+
+// loadSessionByID loads a session by its ID, replacing the current conversation.
+func (m AppModel) loadSessionByID(id string) (tea.Model, tea.Cmd) {
+	if !isValidSessionID(id) {
+		m.chat.AddSystemMessage("Invalid session ID: " + id)
 		return m, nil
 	}
 
-	// Load a specific session by ID
-	sessionPath := filepath.Join(session.SessionDir(), args+".json")
+	sessionPath := filepath.Join(session.SessionDir(), id+".json")
 	sess, err := session.Load(sessionPath)
 	if err != nil {
 		m.chat.AddSystemMessage("Error loading session: " + err.Error())
