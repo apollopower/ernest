@@ -409,13 +409,13 @@ func (a *Agent) Run(ctx context.Context, userPrompt string) <-chan AgentEvent {
 			}
 		}
 		// Append MCP tools (sorted, namespaced)
-		if a.mcpManager != nil {
-			mcpDefs := a.mcpManager.Tools()
+		if mgr := a.MCPManager(); mgr != nil {
+			mcpDefs := mgr.Tools()
 			if currentMode == ModePlan {
 				// Only include MCP tools with readOnlyHint
 				for _, td := range mcpDefs {
 					serverName, toolName, ok := mcppkg.ParseMCPToolName(td.Name)
-					if ok && a.mcpManager.IsReadOnly(serverName, toolName) {
+					if ok && mgr.IsReadOnly(serverName, toolName) {
 						toolDefs = append(toolDefs, td)
 					}
 				}
@@ -544,25 +544,23 @@ func (a *Agent) executeToolWithConfirmation(ctx context.Context, tc toolCall, ev
 
 	if isMCP {
 		// MCP tool — route through MCP manager
-		if a.mcpManager == nil {
+		mgr := a.MCPManager()
+		if mgr == nil {
 			return "", fmt.Errorf("unknown tool: %s (no MCP manager)", tc.ToolName)
 		}
 
 		// Defense in depth: plan mode check for MCP tools
-		if a.Mode() == ModePlan && !a.mcpManager.IsReadOnly(serverName, mcpToolName) {
+		if a.Mode() == ModePlan && !mgr.IsReadOnly(serverName, mcpToolName) {
 			return "", fmt.Errorf("tool %s is not available in plan mode", tc.ToolName)
 		}
 
-		// MCP tools always require confirmation (external, untrusted)
-		requiresConfirmation := true
-
-		// Check permissions
+		// Check permissions — require confirmation unless explicitly allowed
 		perm := a.permissions.Check(tc.ToolName, json.RawMessage(tc.ToolInput))
 		if perm == PermissionDenied {
 			return "", fmt.Errorf("tool %s is denied by settings", tc.ToolName)
 		}
 
-		if perm != PermissionAllowed && requiresConfirmation {
+		if perm != PermissionAllowed {
 			if err := a.waitForConfirmation(ctx, tc, events); err != nil {
 				return "", err
 			}
@@ -575,7 +573,7 @@ func (a *Agent) executeToolWithConfirmation(ctx context.Context, tc toolCall, ev
 				return "", fmt.Errorf("invalid tool input JSON for %s: %w", tc.ToolName, err)
 			}
 		}
-		return a.mcpManager.CallTool(ctx, serverName, mcpToolName, args)
+		return mgr.CallTool(ctx, serverName, mcpToolName, args)
 	}
 
 	// Built-in tool — existing logic

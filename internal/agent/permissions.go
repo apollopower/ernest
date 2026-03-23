@@ -58,9 +58,9 @@ func NewPermissionChecker(claudeCfg *config.ClaudeConfig, autoApprove bool) *Per
 	return pc
 }
 
-// hasGlobChars returns true if the string contains glob wildcard characters.
+// hasGlobChars returns true if the string contains a supported glob wildcard (*).
 func hasGlobChars(s string) bool {
-	return strings.ContainsAny(s, "*?[")
+	return strings.Contains(s, "*")
 }
 
 // addAllowed/addDenied must be called with p.mu held (or during construction).

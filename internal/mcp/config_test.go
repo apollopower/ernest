@@ -7,6 +7,13 @@ import (
 	"testing"
 )
 
+func writeFile(t *testing.T, path string, data []byte) {
+	t.Helper()
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatalf("failed to write %s: %v", path, err)
+	}
+}
+
 func TestLoadMCPConfig_ProjectFile(t *testing.T) {
 	dir := t.TempDir()
 	mcpJSON := `{
@@ -17,7 +24,7 @@ func TestLoadMCPConfig_ProjectFile(t *testing.T) {
 			}
 		}
 	}`
-	os.WriteFile(filepath.Join(dir, ".mcp.json"), []byte(mcpJSON), 0o644)
+	writeFile(t, filepath.Join(dir, ".mcp.json"), []byte(mcpJSON))
 
 	config, err := LoadMCPConfig(dir)
 	if err != nil {
@@ -48,7 +55,7 @@ func TestLoadMCPConfig_UserFile(t *testing.T) {
 			}
 		}
 	}`
-	os.WriteFile(filepath.Join(home, ".claude.json"), []byte(claudeJSON), 0o644)
+	writeFile(t, filepath.Join(home, ".claude.json"), []byte(claudeJSON))
 
 	config, err := LoadMCPConfig(dir)
 	if err != nil {
@@ -79,7 +86,7 @@ func TestLoadMCPConfig_ClaudeJSONProjectScoped(t *testing.T) {
 			}
 		}
 	}`, dir)
-	os.WriteFile(filepath.Join(home, ".claude.json"), []byte(claudeJSON), 0o644)
+	writeFile(t, filepath.Join(home, ".claude.json"), []byte(claudeJSON))
 
 	config, err := LoadMCPConfig(dir)
 	if err != nil {
@@ -107,18 +114,18 @@ func TestLoadMCPConfig_ProjectOverridesUser(t *testing.T) {
 	t.Setenv("HOME", home)
 
 	// User config
-	os.WriteFile(filepath.Join(home, ".claude.json"), []byte(`{
+	writeFile(t, filepath.Join(home, ".claude.json"), []byte(`{
 		"mcpServers": {
 			"server": {"command": "user-cmd"}
 		}
-	}`), 0o644)
+	}`))
 
 	// Project config (should override)
-	os.WriteFile(filepath.Join(dir, ".mcp.json"), []byte(`{
+	writeFile(t, filepath.Join(dir, ".mcp.json"), []byte(`{
 		"mcpServers": {
 			"server": {"command": "project-cmd"}
 		}
-	}`), 0o644)
+	}`))
 
 	config, err := LoadMCPConfig(dir)
 	if err != nil {
@@ -132,12 +139,12 @@ func TestLoadMCPConfig_ProjectOverridesUser(t *testing.T) {
 
 func TestLoadMCPConfig_RejectsDoubleUnderscore(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, ".mcp.json"), []byte(`{
+	writeFile(t, filepath.Join(dir, ".mcp.json"), []byte(`{
 		"mcpServers": {
 			"bad__name": {"command": "test"},
 			"good-name": {"command": "test"}
 		}
-	}`), 0o644)
+	}`))
 
 	config, err := LoadMCPConfig(dir)
 	if err != nil {

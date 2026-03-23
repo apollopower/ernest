@@ -119,6 +119,9 @@ func (m *Manager) connectServer(ctx context.Context, name string, cfg MCPServerC
 	// Discover tools
 	result, err := session.ListTools(connectCtx, nil)
 	if err != nil {
+		// Close session to avoid leaking the MCP server process
+		_ = session.Close()
+		conn.session = nil
 		conn.err = fmt.Errorf("list tools: %w", err)
 		return conn
 	}
