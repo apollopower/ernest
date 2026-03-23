@@ -293,11 +293,11 @@ func (m *ChatModel) renderMessages() {
 			content := m.renderAssistantContent(msg)
 			lines = append(lines, label+" "+content)
 		case "tool_call":
-			label := toolLabelStyle.Render("[" + msg.ToolName + "]")
+			label := toolLabelStyle.Render("[" + formatToolName(msg.ToolName) + "]")
 			content := toolContentStyle.Render(msg.Content)
 			lines = append(lines, label+" "+content)
 		case "tool_result":
-			label := toolLabelStyle.Render("[" + msg.ToolName + " result]")
+			label := toolLabelStyle.Render("[" + formatToolName(msg.ToolName) + " result]")
 			content := toolContentStyle.Render(msg.Content)
 			lines = append(lines, label+"\n"+content)
 		case "system":
@@ -477,4 +477,18 @@ func (m *ChatModel) GotoTop() {
 // GotoBottom scrolls to the bottom of the chat.
 func (m *ChatModel) GotoBottom() {
 	m.viewport.GotoBottom()
+}
+
+// formatToolName converts MCP tool names to a friendly display format.
+// "mcp__sentry__search_issues" → "sentry: search_issues"
+// Built-in tools pass through unchanged.
+func formatToolName(name string) string {
+	if !strings.HasPrefix(name, "mcp__") {
+		return name
+	}
+	rest := name[5:] // strip "mcp__"
+	if idx := strings.Index(rest, "__"); idx > 0 {
+		return rest[:idx] + ": " + rest[idx+2:]
+	}
+	return name
 }

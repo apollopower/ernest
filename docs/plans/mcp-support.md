@@ -1,7 +1,7 @@
 # MCP Support: Connect to External Tool Servers
 
 ## Date: 2026-03-23
-## Status: Draft
+## Status: In Progress
 ## GitHub Issue: #17
 
 ---
@@ -370,25 +370,25 @@ This plan does **NOT** include:
 ## Implementation Checklist
 
 ### Phase 1: MCP Client Infrastructure
-- [ ] Pin Go MCP SDK version and validate API surface (Step 1.0)
-- [ ] Add `github.com/modelcontextprotocol/go-sdk` dependency
-- [ ] Create `internal/mcp/config.go` — config loader with env var expansion, server name validation
-- [ ] Create `internal/mcp/manager.go` — Manager, ConnectAll (30s timeout), CallTool (100KB truncation), Tools (sorted), Close, Reconnect
-- [ ] Add MCP tool name parsing (`strings.SplitN`) and routing in agent loop
-- [ ] MCP tools always require confirmation (hardcoded for `mcp__` prefix)
-- [ ] Extend `PermissionChecker.Check()` to support glob patterns in tool names
-- [ ] Add `mcpManager` field to Agent struct
-- [ ] Combine built-in + MCP tool definitions in Run() (sorted, plan mode respects readOnlyHint)
-- [ ] Wire MCP manager into main.go (load config, connect, defer close)
-- [ ] Write config loader tests (parse, expansion, missing, server name validation)
+- [x] Pin Go MCP SDK version and validate API surface (Step 1.0)
+- [x] Add `github.com/modelcontextprotocol/go-sdk` dependency
+- [x] Create `internal/mcp/config.go` — config loader with env var expansion, server name validation
+- [x] Create `internal/mcp/manager.go` — Manager, ConnectAll (30s timeout), CallTool (100KB truncation), Tools (sorted), Close, Reconnect
+- [x] Add MCP tool name parsing (`strings.SplitN`) and routing in agent loop
+- [x] MCP tools require confirmation unless explicitly allowed by permissions
+- [x] Extend `PermissionChecker.Check()` to support glob patterns in tool names
+- [x] Add `mcpManager` field to Agent struct
+- [x] Combine built-in + MCP tool definitions in Run() (sorted, plan mode respects readOnlyHint)
+- [x] Wire MCP manager into main.go (load config, connect, defer close)
+- [x] Write config loader tests (parse, expansion, missing, server name validation)
 - [ ] Write manager tests (mock server, tool routing, truncation)
 - [ ] Verify: end-to-end with a real MCP server
 
 ### Phase 2: /mcp Command and Display
-- [ ] Add `/mcp` status command
-- [ ] Add `/mcp reconnect [name]` command
-- [ ] Friendly display names for MCP tools in chat (e.g., `[sentry: search_issues]`)
-- [ ] Write permission tests for MCP tool name globs
+- [x] Add `/mcp` status command
+- [x] Add `/mcp reconnect [name]` command
+- [x] Friendly display names for MCP tools in chat (e.g., `[sentry: search_issues]`)
+- [x] Write permission tests for MCP tool name globs (done in Phase 1)
 - [ ] Verify: MCP tool call with confirmation dialog, auto-approve with glob
 
 ### Phase 3: HTTP Transport and TUI Management

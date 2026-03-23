@@ -541,6 +541,9 @@ func (m AppModel) executeCmd(name, args string) (tea.Model, tea.Cmd) {
 	case "build":
 		return m.handleBuild()
 
+	case "mcp":
+		return m.handleMCP(args)
+
 	}
 
 	m.chat.AddSystemMessage("Unknown command: " + name)
@@ -985,13 +988,94 @@ func (m AppModel) handleBuild() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// handleMCP handles /mcp [reconnect [name]].
+func (m AppModel) handleMCP(args string) (tea.Model, tea.Cmd) {
+	if m.agent == nil {
+		m.chat.AddSystemMessage("No agent configured.")
+		return m, nil
+	}
+	mgr := m.agent.MCPManager()
+	if mgr == nil {
+		m.chat.AddSystemMessage("No MCP servers configured.")
+		return m, nil
+	}
+
+	parts := strings.SplitN(strings.TrimSpace(args), " ", 2)
+	subCmd := parts[0]
+
+	switch subCmd {
+	case "", "status":
+		// Show MCP server status
+		statuses := mgr.Status()
+		if len(statuses) == 0 {
+			m.chat.AddSystemMessage("No MCP servers configured.")
+			return m, nil
+		}
+
+		var sb strings.Builder
+		sb.WriteString("MCP Servers:\n")
+		totalTools := 0
+		for _, s := range statuses {
+			switch s.Status {
+			case "connected":
+				sb.WriteString(fmt.Sprintf("  %s — connected (%d tools)\n", s.Name, s.ToolCount))
+				totalTools += s.ToolCount
+			case "error":
+				sb.WriteString(fmt.Sprintf("  %s — error: %s\n", s.Name, s.Error))
+			default:
+				sb.WriteString(fmt.Sprintf("  %s — %s\n", s.Name, s.Status))
+			}
+		}
+		sb.WriteString(fmt.Sprintf("\nTotal: %d MCP tools available", totalTools))
+		m.chat.AddSystemMessage(sb.String())
+		return m, nil
+
+	case "reconnect":
+		name := ""
+		if len(parts) > 1 {
+			name = strings.TrimSpace(parts[1])
+		}
+		if name != "" {
+			// Reconnect a specific server
+			if err := mgr.Reconnect(context.Background(), name); err != nil {
+				m.chat.AddSystemMessage(fmt.Sprintf("Reconnect %s failed: %v", name, err))
+			} else {
+				m.chat.AddSystemMessage(fmt.Sprintf("Reconnected %s.", name))
+			}
+		} else {
+			// Reconnect all disconnected/errored servers
+			statuses := mgr.Status()
+			reconnected := 0
+			for _, s := range statuses {
+				if s.Status != "connected" {
+					if err := mgr.Reconnect(context.Background(), s.Name); err != nil {
+						m.chat.AddSystemMessage(fmt.Sprintf("Reconnect %s failed: %v", s.Name, err))
+					} else {
+						reconnected++
+					}
+				}
+			}
+			if reconnected > 0 {
+				m.chat.AddSystemMessage(fmt.Sprintf("Reconnected %d server(s).", reconnected))
+			} else {
+				m.chat.AddSystemMessage("All servers already connected.")
+			}
+		}
+		return m, nil
+
+	default:
+		m.chat.AddSystemMessage("Usage: /mcp [status|reconnect [name]]")
+		return m, nil
+	}
+}
+
 // knownCommands is the set of recognized slash/colon commands.
 var knownCommands = map[string]bool{
 	"q": true, "quit": true,
 	"status": true, "save": true, "clear": true,
 	"compact": true, "resume": true,
 	"providers": true, "provider": true, "model": true,
-	"plan": true, "build": true,
+	"plan": true, "build": true, "mcp": true,
 }
 
 func isKnownCommand(name string) bool {
