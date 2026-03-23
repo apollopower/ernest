@@ -8,6 +8,7 @@ import (
 	"ernest/internal/session"
 	"fmt"
 	"log"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -40,8 +41,9 @@ type AppModel struct {
 	cfg            config.Config
 	creds          *config.Credentials
 	confirmDialog  *ToolConfirmModel
-	picker         *PickerModel
-	pickerAction   string // "switch_provider" or "switch_model" — what to do with the result
+	picker           *PickerModel
+	pickerAction     string // "switch_provider" or "resume_session" — what to do with the result
+	planSaveFilename string // non-empty when /plan save is streaming a consolidation
 	focused        bool   // true = input focused, false = vim nav mode
 	streaming      bool   // true while agent is streaming a response
 	confirming     bool   // true while tool confirmation dialog is visible
@@ -235,6 +237,24 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 
+		// Shift+Tab cycles between plan and build modes
+		if msg.Type == tea.KeyShiftTab {
+			if m.agent != nil && !m.streaming && !m.confirming && !m.compacting {
+				if m.agent.Mode() == agent.ModePlan {
+					m.agent.SetMode(agent.ModeBuild)
+					m.agent.InjectModeChange(agent.ModeBuild)
+					m.statusBar, _ = m.statusBar.Update(StatusUpdateMsg{Mode: "build"})
+					m.chat.AddSystemMessage("Entered build mode. All tools available.")
+				} else {
+					m.agent.SetMode(agent.ModePlan)
+					m.agent.InjectModeChange(agent.ModePlan)
+					m.statusBar, _ = m.statusBar.Update(StatusUpdateMsg{Mode: "plan"})
+					m.chat.AddSystemMessage("Entered plan mode. Read-only tools only.")
+				}
+			}
+			return m, nil
+		}
+
 		if msg.Type == tea.KeyEsc {
 			// Dismiss picker
 			if m.picker != nil {
@@ -351,6 +371,14 @@ func (m AppModel) handleAgentEvent(evt agent.AgentEvent) (tea.Model, tea.Cmd) {
 			m.cancelStream()
 			m.cancelStream = nil
 		}
+
+		// Handle /plan save — write the consolidated plan to disk
+		if m.planSaveFilename != "" {
+			filename := m.planSaveFilename
+			m.planSaveFilename = ""
+			m.writePlanFile(filename)
+		}
+
 		// Update token estimate in status bar
 		if m.agent != nil {
 			tokens := m.agent.EstimateCurrentTokens()
@@ -497,6 +525,12 @@ func (m AppModel) executeCmd(name, args string) (tea.Model, tea.Cmd) {
 
 	case "model":
 		return m.handleModel(args)
+
+	case "plan":
+		return m.handlePlan(args)
+
+	case "build":
+		return m.handleBuild()
 
 	}
 
@@ -807,12 +841,126 @@ func (m *AppModel) rebuildRouter() {
 	})
 }
 
+// handlePlan enters plan mode or saves a plan.
+func (m AppModel) handlePlan(args string) (tea.Model, tea.Cmd) {
+	parts := strings.Fields(args)
+
+	// /plan save <filename>
+	if len(parts) >= 1 && parts[0] == "save" {
+		if len(parts) < 2 {
+			m.chat.AddSystemMessage("Usage: /plan save <filename>")
+			return m, nil
+		}
+		return m.handlePlanSave(parts[1])
+	}
+
+	// /plan (enter plan mode)
+	if m.agent == nil {
+		m.chat.AddSystemMessage("No agent configured.")
+		return m, nil
+	}
+
+	if m.agent.Mode() == agent.ModePlan {
+		m.chat.AddSystemMessage("Already in plan mode.")
+		return m, nil
+	}
+
+	m.agent.SetMode(agent.ModePlan)
+	m.agent.InjectModeChange(agent.ModePlan)
+	m.statusBar, _ = m.statusBar.Update(StatusUpdateMsg{Mode: "plan"})
+	m.chat.AddSystemMessage("Entered plan mode. Read-only tools only. Use /build to return.")
+	return m, nil
+}
+
+// handlePlanSave consolidates and saves the plan to docs/plans/<filename>.md.
+func (m AppModel) handlePlanSave(filename string) (tea.Model, tea.Cmd) {
+	filename = filepath.Base(filename) // sanitize — prevent path traversal
+	if m.agent == nil {
+		m.chat.AddSystemMessage("No agent configured.")
+		return m, nil
+	}
+
+	// Send a consolidation prompt to the agent
+	m.chat.AddSystemMessage("Saving plan...")
+	m.streaming = true
+
+	ctx, cancel := context.WithCancel(context.Background())
+	m.cancelStream = cancel
+
+	// The filename is captured for use after streaming completes
+	m.planSaveFilename = filename
+	m.agentCh = m.agent.Run(ctx, "Output the complete plan document in a single markdown message, following the required plan format. Include all sections we discussed.")
+	dotCmd := m.chat.StartStreamingMessage()
+
+	return m, tea.Batch(waitForAgentEvent(m.agentCh), dotCmd)
+}
+
+// writePlanFile extracts the last assistant message and writes it to docs/plans/.
+func (m *AppModel) writePlanFile(filename string) {
+	// Find the last assistant message text
+	history := m.agent.History()
+	var planText string
+	for i := len(history) - 1; i >= 0; i-- {
+		if history[i].Role == provider.RoleAssistant {
+			for _, block := range history[i].Content {
+				if block.Type == "text" {
+					planText = block.Text
+					break
+				}
+			}
+			if planText != "" {
+				break
+			}
+		}
+	}
+
+	if planText == "" {
+		m.chat.AddSystemMessage("No plan text found to save.")
+		return
+	}
+
+	baseDir := "."
+	if m.session != nil && m.session.ProjectDir != "" {
+		baseDir = m.session.ProjectDir
+	}
+	path := filepath.Join(baseDir, "docs", "plans", filename+".md")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		m.chat.AddSystemMessage("Error creating directory: " + err.Error())
+		return
+	}
+	if err := os.WriteFile(path, []byte(planText), 0o644); err != nil {
+		m.chat.AddSystemMessage("Error writing plan: " + err.Error())
+		return
+	}
+	m.chat.AddSystemMessage("Plan saved to " + path)
+}
+
+// handleBuild exits plan mode.
+func (m AppModel) handleBuild() (tea.Model, tea.Cmd) {
+	if m.agent == nil {
+		m.chat.AddSystemMessage("No agent configured.")
+		return m, nil
+	}
+
+	if m.agent.Mode() == agent.ModeBuild {
+		m.chat.AddSystemMessage("Already in build mode.")
+		return m, nil
+	}
+
+	m.agent.SetMode(agent.ModeBuild)
+	m.agent.InjectModeChange(agent.ModeBuild)
+	m.statusBar, _ = m.statusBar.Update(StatusUpdateMsg{Mode: "build"})
+	m.chat.AddSystemMessage("Entered build mode. All tools available.")
+	return m, nil
+}
+
 // knownCommands is the set of recognized slash/colon commands.
 var knownCommands = map[string]bool{
 	"q": true, "quit": true,
 	"status": true, "save": true, "clear": true,
 	"compact": true, "resume": true,
 	"providers": true, "provider": true, "model": true,
+	"plan": true, "build": true,
 }
 
 func isKnownCommand(name string) bool {
@@ -918,8 +1066,13 @@ func (m AppModel) loadSessionByID(id string) (tea.Model, tea.Cmd) {
 	m.chat.LoadMessages(chatMsgs)
 	m.chat.AddSystemMessage(fmt.Sprintf("Resumed session %s", sess.ID))
 
-	// Update status bar with token estimate
+	// Restore mode from session
 	if m.agent != nil {
+		restoredMode := agent.AgentMode(sess.Mode)
+		if restoredMode == agent.ModePlan {
+			m.agent.SetMode(agent.ModePlan)
+			m.statusBar, _ = m.statusBar.Update(StatusUpdateMsg{Mode: "plan"})
+		}
 		tokens := m.agent.EstimateCurrentTokens()
 		m.statusBar, _ = m.statusBar.Update(StatusUpdateMsg{Tokens: tokens})
 	}
@@ -934,6 +1087,7 @@ func (m *AppModel) saveSession() error {
 	}
 	if m.agent != nil {
 		m.session.SetMessages(m.agent.History())
+		m.session.Mode = string(m.agent.Mode())
 	}
 	return m.session.Save()
 }

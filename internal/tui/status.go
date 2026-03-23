@@ -29,6 +29,7 @@ var (
 type StatusModel struct {
 	provider  string
 	model     string
+	mode      string // "plan" or "" (build is default, not shown)
 	tokens    int
 	maxTokens int
 	width     int
@@ -37,6 +38,7 @@ type StatusModel struct {
 type StatusUpdateMsg struct {
 	Provider  string
 	Model     string
+	Mode      string // "plan" or "" to clear
 	Tokens    int
 	MaxTokens int
 }
@@ -68,6 +70,12 @@ func (m StatusModel) Update(msg tea.Msg) (StatusModel, tea.Cmd) {
 		if msg.MaxTokens >= 0 {
 			m.maxTokens = msg.MaxTokens
 		}
+		// Mode: explicit set — empty string clears it
+		if msg.Mode == "plan" {
+			m.mode = "plan"
+		} else if msg.Mode == "build" || msg.Mode == "clear" {
+			m.mode = ""
+		}
 	}
 	return m, nil
 }
@@ -75,6 +83,17 @@ func (m StatusModel) Update(msg tea.Msg) (StatusModel, tea.Cmd) {
 func (m StatusModel) View() string {
 	if m.width == 0 {
 		return ""
+	}
+
+	// Mode indicator (only shown in plan mode)
+	modeIndicator := ""
+	if m.mode == "plan" {
+		modeStyle := lipgloss.NewStyle().
+			Background(lipgloss.AdaptiveColor{Light: "#D4A017", Dark: "#FFD700"}).
+			Foreground(lipgloss.AdaptiveColor{Light: "#1a1a1a", Dark: "#1a1a1a"}).
+			Padding(0, 1).
+			Bold(true)
+		modeIndicator = modeStyle.Render("PLAN")
 	}
 
 	provider := statusProviderStyle.Render(m.provider)
@@ -89,13 +108,14 @@ func (m StatusModel) View() string {
 	tokenStyle := m.tokenStyle()
 	info := tokenStyle.Render(tokenText)
 
-	gap := m.width - lipgloss.Width(provider) - lipgloss.Width(info)
+	leftParts := modeIndicator + provider
+	gap := m.width - lipgloss.Width(leftParts) - lipgloss.Width(info)
 	if gap < 0 {
 		gap = 0
 	}
 	filler := statusBarStyle.Render(strings.Repeat(" ", gap))
 
-	return provider + filler + info
+	return leftParts + filler + info
 }
 
 // tokenStyle returns the appropriate style based on token usage percentage.
