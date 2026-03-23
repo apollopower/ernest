@@ -1,7 +1,7 @@
 # MCP Support: Connect to External Tool Servers
 
 ## Date: 2026-03-23
-## Status: In Progress
+## Status: Pending Verification
 ## GitHub Issue: #17
 
 ---
@@ -314,11 +314,43 @@ Handle `notifications/tools/list_changed` from MCP servers:
 - Re-fetch tools when the server notifies of changes
 - Update the tool list without restarting Ernest
 
-#### Step 3.4: Tests for Phase 3
+#### Step 3.4: Claude Code Plugin Compatibility
+
+Read Claude Code's installed plugin configs and OAuth tokens so Ernest can connect to the same MCP servers (Linear, Sentry, GitHub, Figma, etc.) without manual setup.
+
+**Plugin config location:** `~/.claude/plugins/installed_plugins.json` lists installed plugins with their install paths. Each plugin has a `.mcp.json` at its install path defining the MCP server.
+
+**OAuth token location:** `~/.claude/.credentials.json` under the `mcpOAuth` key. Each entry is keyed by `plugin:<plugin>:<server>|<session_id>` and contains:
+- `serverUrl` — the MCP server URL
+- `accessToken` — Bearer token for Authorization header
+- `expiresAt` — token expiration timestamp (ms since epoch)
+
+**Resolution flow:**
+1. Read `~/.claude/plugins/installed_plugins.json` to find installed plugins
+2. For each plugin, read `.mcp.json` at its `installPath` to get the server URL
+3. Match against `~/.claude/.credentials.json` `mcpOAuth` entries by server URL
+4. If a valid (non-expired) `accessToken` exists, inject it as `Authorization: Bearer <token>`
+5. Plugin servers are loaded at the lowest priority (user `.claude.json` and project `.mcp.json` override)
+
+**Plugin `.mcp.json` format** (note: no `mcpServers` wrapper, unlike project `.mcp.json`):
+```json
+{
+  "linear": {
+    "type": "http",
+    "url": "https://mcp.linear.app/mcp"
+  }
+}
+```
+Some plugins use the standard `mcpServers` wrapper, others don't. Handle both formats.
+
+**Scope:** Read-only compatibility — Ernest reads Claude Code's plugin state but does not install, update, or manage plugins. Plugin installation/management remains a Claude Code concern.
+
+#### Step 3.5: Tests for Phase 3
 
 - HTTP transport connection
 - `/mcp add` / `/mcp remove` with config persistence
 - Tool list refresh on notification
+- Plugin config loading and OAuth token resolution
 
 ---
 
@@ -331,13 +363,13 @@ Phase 1 (Config loader + Manager + Tool routing) ──→ PR #1
 Phase 2 (Agent integration + /mcp + display) ──→ PR #2
     │
     ▼
-Phase 3 (HTTP transport + TUI management) ──→ PR #3
+Phase 3 (HTTP transport + TUI management + plugin compat) ──→ PR #3
 ```
 
 Each phase produces a working, testable state:
 - After Phase 1: stdio MCP servers connect, tools discovered and callable with confirmation
 - After Phase 2: /mcp status, reconnect, friendly display, full permissions
-- After Phase 3: remote servers, TUI management, dynamic refresh
+- After Phase 3: remote servers, TUI management, Claude Code plugin compatibility
 
 ---
 
@@ -350,6 +382,8 @@ Each phase produces a working, testable state:
 | MCP tool names collide with built-in tools | Low | Low | `mcp__` prefix prevents collisions by convention. |
 | Env var expansion has security implications | Medium | Medium | Only expand in MCP config fields, not arbitrary strings. Log a warning if sensitive-looking vars are expanded. |
 | Claude Code changes config format | Low | Medium | Config format is stable and documented. Version checking on `.mcp.json` if needed. |
+| Claude Code plugin/credential format changes | Medium | Medium | Read-only compatibility — graceful fallback if format is unrecognized. Log warnings, don't crash. |
+| OAuth tokens expire | High | Low | Log warning on expired token, server will reject with auth error. User re-auths in Claude Code. |
 | MCP server produces large output | Medium | Medium | Truncate MCP tool results to the same limits as built-in tools (100KB). |
 
 ---
@@ -360,9 +394,9 @@ This plan does **NOT** include:
 - MCP resources (files, data) — only tools for now
 - MCP prompts (templates) — only tools
 - MCP server development (only client side)
-- OAuth 2.0 flows for remote servers (Bearer token support only)
+- OAuth 2.0 flows (Ernest reads existing tokens from Claude Code, does not run its own OAuth)
 - MCP server auto-restart on crash (manual reconnect via `/mcp reconnect`)
-- Claude Code plugin installation or management
+- Claude Code plugin installation, update, or management (read-only compatibility)
 - Bidirectional MCP features (sampling, elicitation — server asking the client)
 
 ---
@@ -391,9 +425,14 @@ This plan does **NOT** include:
 - [x] Write permission tests for MCP tool name globs (done in Phase 1)
 - [ ] Verify: MCP tool call with confirmation dialog, auto-approve with glob
 
-### Phase 3: HTTP Transport and TUI Management
-- [ ] Add HTTP transport support for remote servers (StreamableHTTP + SSE)
-- [ ] Implement `/mcp add` and `/mcp remove` commands
-- [ ] Handle `notifications/tools/list_changed` for dynamic refresh
-- [ ] Write HTTP transport and management tests
-- [ ] Verify: connect to a remote MCP server (e.g., Sentry, GitHub)
+### Phase 3: HTTP Transport, TUI Management, and Plugin Compatibility
+- [x] Add HTTP transport support for remote servers (StreamableHTTP + SSE)
+- [x] Implement `/mcp add` and `/mcp remove` commands
+- [x] Handle `notifications/tools/list_changed` via `RefreshTools()`
+- [x] Write HTTP transport and management tests
+- [x] Read Claude Code plugin configs from `~/.claude/plugins/`
+- [x] Read OAuth tokens from `~/.claude/.credentials.json`
+- [x] Match plugins to tokens by server URL, inject Bearer auth
+- [x] Handle both plugin `.mcp.json` formats (with/without `mcpServers` wrapper)
+- [x] Write plugin config loader and token resolution tests
+- [ ] Verify: connect to Linear, Sentry via Claude Code plugin tokens
