@@ -14,6 +14,22 @@ import (
 
 const maxToolLoops = 50
 
+// AgentMode represents the current operating mode.
+type AgentMode string
+
+const (
+	ModeBuild AgentMode = "build" // default — all tools available
+	ModePlan  AgentMode = "plan"  // read-only tools + planning prompt
+)
+
+// readOnlyTools is the set of tools available in plan mode.
+// DO NOT modify at runtime — this is a security-relevant constant.
+var readOnlyTools = map[string]bool{
+	"read_file": true,
+	"glob":      true,
+	"grep":      true,
+}
+
 // AgentEvent is what the TUI receives from the agent loop.
 type AgentEvent struct {
 	Type         string // "text", "usage", "tool_call", "tool_result", "tool_confirm", "provider_switch", "error", "done"
@@ -48,21 +64,57 @@ type Agent struct {
 	permissions      *PermissionChecker
 	claudeCfg        *config.ClaudeConfig
 	history          []provider.Message
+	mode             AgentMode
 	maxContextTokens int
 	confirmCh        chan ToolDecision // buffered(1), internal — use ResolveTool to send
 }
 
 // New creates an agent with the given router, tool registry, and claude config.
 // autoApprove bypasses tool confirmation for all tools (except explicitly denied).
-func New(router *provider.Router, registry *tools.Registry, claudeCfg *config.ClaudeConfig, maxContextTokens int, autoApprove bool) *Agent {
+func New(router *provider.Router, registry *tools.Registry, claudeCfg *config.ClaudeConfig, maxContextTokens int, autoApprove bool, mode AgentMode) *Agent {
+	if mode == "" {
+		mode = ModeBuild
+	}
 	return &Agent{
 		router:           router,
 		registry:         registry,
 		permissions:      NewPermissionChecker(claudeCfg, autoApprove),
 		claudeCfg:        claudeCfg,
+		mode:             mode,
 		maxContextTokens: maxContextTokens,
 		confirmCh:        make(chan ToolDecision, 1),
 	}
+}
+
+// SetMode changes the agent's operating mode at runtime.
+func (a *Agent) SetMode(mode AgentMode) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.mode = mode
+}
+
+// Mode returns the current operating mode.
+func (a *Agent) Mode() AgentMode {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.mode
+}
+
+// InjectModeChange adds a system-like message to history informing the model
+// that the mode has changed. Called by the TUI on /plan and /build.
+func (a *Agent) InjectModeChange(mode AgentMode) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	var text string
+	if mode == ModePlan {
+		text = "[Mode changed to PLAN. Only read-only tools are available. Focus on designing, not implementing.]"
+	} else {
+		text = "[Mode changed to BUILD. All tools are available.]"
+	}
+	a.history = append(a.history, provider.Message{
+		Role:    provider.RoleUser,
+		Content: []provider.ContentBlock{{Type: "text", Text: text}},
+	})
 }
 
 // SetRouter replaces the agent's router at runtime. Called by the TUI
@@ -89,6 +141,9 @@ func (a *Agent) EstimateCurrentTokens() int {
 	defer a.mu.Unlock()
 	tokens := EstimateTokens(a.history)
 	tokens += EstimateSystemPromptTokens(DefaultSystemPrompt)
+	if a.mode == ModePlan {
+		tokens += EstimateSystemPromptTokens(PlanModePrompt)
+	}
 	if a.claudeCfg != nil {
 		tokens += EstimateSystemPromptTokens(a.claudeCfg.SystemPrompt)
 	}
@@ -321,15 +376,29 @@ func (a *Agent) Run(ctx context.Context, userPrompt string) <-chan AgentEvent {
 			Role:    provider.RoleUser,
 			Content: []provider.ContentBlock{{Type: "text", Text: userPrompt}},
 		})
+		currentMode := a.mode
 		a.mu.Unlock()
 
 		var toolDefs []provider.ToolDef
 		if a.registry != nil {
-			toolDefs = a.registry.ToolDefs()
+			allDefs := a.registry.ToolDefs()
+			if currentMode == ModePlan {
+				// Filter to read-only tools in plan mode
+				for _, td := range allDefs {
+					if readOnlyTools[td.Name] {
+						toolDefs = append(toolDefs, td)
+					}
+				}
+			} else {
+				toolDefs = allDefs
+			}
 		}
 
-		// Build full system prompt: Ernest defaults + user/project CLAUDE.md
+		// Build full system prompt: Ernest defaults + mode-specific + user/project CLAUDE.md
 		systemPrompt := DefaultSystemPrompt
+		if currentMode == ModePlan {
+			systemPrompt += "\n\n---\n\n" + PlanModePrompt
+		}
 		if a.claudeCfg != nil && a.claudeCfg.SystemPrompt != "" {
 			systemPrompt += "\n\n---\n\n" + a.claudeCfg.SystemPrompt
 		}
@@ -447,6 +516,11 @@ func (a *Agent) executeToolWithConfirmation(ctx context.Context, tc toolCall, ev
 	tool, ok := a.registry.Get(tc.ToolName)
 	if !ok {
 		return "", fmt.Errorf("unknown tool: %s", tc.ToolName)
+	}
+
+	// Defense in depth: reject write tools in plan mode even if model hallucinates them
+	if a.Mode() == ModePlan && !readOnlyTools[tc.ToolName] {
+		return "", fmt.Errorf("tool %s is not available in plan mode", tc.ToolName)
 	}
 
 	// Check permissions (with tool input for granular matching like bash commands)

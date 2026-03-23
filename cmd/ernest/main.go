@@ -28,6 +28,7 @@ func main() {
 	headlessMode := flag.Bool("headless", false, "Run in headless conversational mode (stdin/stdout)")
 	output := flag.String("output", "text", "Output format: text or json")
 	autoApprove := flag.Bool("auto-approve", false, "Skip all tool confirmation dialogs (headless only)")
+	planMode := flag.Bool("plan", false, "Start in plan mode (read-only tools only)")
 	resumeID := flag.String("resume", "", "Resume a session by ID")
 	flag.Parse()
 
@@ -129,7 +130,11 @@ func main() {
 
 	cooldown := time.Duration(cfg.CooldownSeconds) * time.Second
 	router := provider.NewRouter(providers, cooldown)
-	a := agent.New(router, registry, claudeCfg, cfg.MaxContextTokens, *autoApprove)
+	initialMode := agent.ModeBuild
+	if *planMode {
+		initialMode = agent.ModePlan
+	}
+	a := agent.New(router, registry, claudeCfg, cfg.MaxContextTokens, *autoApprove, initialMode)
 
 	// Session: resume or create new
 	var sess *session.Session

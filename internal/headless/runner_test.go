@@ -71,7 +71,7 @@ func TestRunPrompt_TextOutput(t *testing.T) {
 	}
 
 	router := provider.NewRouter([]provider.Provider{mp}, 30*time.Second)
-	a := agent.New(router, nil, &config.ClaudeConfig{}, 0, false)
+	a := agent.New(router, nil, &config.ClaudeConfig{}, 0, false, agent.ModeBuild)
 	sess := newTestSession(t)
 
 	var buf bytes.Buffer
@@ -98,7 +98,7 @@ func TestRunPrompt_JSONOutput(t *testing.T) {
 	}
 
 	router := provider.NewRouter([]provider.Provider{mp}, 30*time.Second)
-	a := agent.New(router, nil, &config.ClaudeConfig{}, 0, false)
+	a := agent.New(router, nil, &config.ClaudeConfig{}, 0, false, agent.ModeBuild)
 	sess := newTestSession(t)
 
 	var buf bytes.Buffer
@@ -160,7 +160,7 @@ func TestRunPrompt_JSONToolEvents(t *testing.T) {
 
 	registry := tools.NewRegistry(&mockTool{name: "read_file", result: "hello"})
 	router := provider.NewRouter([]provider.Provider{mp}, 30*time.Second)
-	a := agent.New(router, registry, &config.ClaudeConfig{}, 0, false)
+	a := agent.New(router, registry, &config.ClaudeConfig{}, 0, false, agent.ModeBuild)
 	sess := newTestSession(t)
 
 	var buf bytes.Buffer
@@ -189,7 +189,7 @@ func TestRunConversation_MultiTurn(t *testing.T) {
 	}
 
 	router := provider.NewRouter([]provider.Provider{mp}, 30*time.Second)
-	a := agent.New(router, nil, &config.ClaudeConfig{}, 0, false)
+	a := agent.New(router, nil, &config.ClaudeConfig{}, 0, false, agent.ModeBuild)
 	sess := newTestSession(t)
 
 	var buf bytes.Buffer
@@ -233,7 +233,7 @@ func TestRunPrompt_ToolDeniedHeadless(t *testing.T) {
 	})
 	router := provider.NewRouter([]provider.Provider{mp}, 30*time.Second)
 	// No auto-approve — tool should be denied in headless
-	a := agent.New(router, registry, &config.ClaudeConfig{}, 0, false)
+	a := agent.New(router, registry, &config.ClaudeConfig{}, 0, false, agent.ModeBuild)
 	sess := newTestSession(t)
 
 	var buf bytes.Buffer
@@ -276,7 +276,7 @@ func TestRunPrompt_AutoApprove(t *testing.T) {
 	})
 	router := provider.NewRouter([]provider.Provider{mp}, 30*time.Second)
 	// Auto-approve enabled
-	a := agent.New(router, registry, &config.ClaudeConfig{}, 0, true)
+	a := agent.New(router, registry, &config.ClaudeConfig{}, 0, true, agent.ModeBuild)
 	sess := newTestSession(t)
 
 	var buf bytes.Buffer

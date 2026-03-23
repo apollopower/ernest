@@ -24,6 +24,7 @@ type Session struct {
 	Summary    string             `json:"summary"`
 	Messages   []provider.Message `json:"messages"`
 	TokenCount int                `json:"token_count"`
+	Mode       string             `json:"mode"` // "build" or "plan", defaults to "build"
 }
 
 // sessionMeta is a lightweight struct for listing sessions without loading
