@@ -174,10 +174,11 @@ type headerTransport struct {
 }
 
 func (t *headerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	r := req.Clone(req.Context())
 	for k, v := range t.headers {
-		req.Header.Set(k, v)
+		r.Header.Set(k, v)
 	}
-	return t.base.RoundTrip(req)
+	return t.base.RoundTrip(r)
 }
 
 // Tools returns all discovered MCP tool definitions, namespaced and sorted.
@@ -347,7 +348,15 @@ func (m *Manager) Status() []ServerStatus {
 }
 
 // AddServer connects a new MCP server at runtime.
+// Closes any existing server with the same name before connecting.
 func (m *Manager) AddServer(ctx context.Context, name string, cfg MCPServerConfig) error {
+	// Close existing server if any
+	m.mu.Lock()
+	if existing, ok := m.servers[name]; ok && existing.session != nil {
+		existing.session.Close()
+	}
+	m.mu.Unlock()
+
 	conn := m.connectServer(ctx, name, cfg)
 	m.mu.Lock()
 	m.servers[name] = conn

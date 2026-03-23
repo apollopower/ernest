@@ -195,6 +195,9 @@ func loadClaudePlugins(home string) (map[string]MCPServerConfig, error) {
 			mcpPath := filepath.Join(inst.InstallPath, ".mcp.json")
 			pluginServers, err := loadPluginMCPFile(mcpPath)
 			if err != nil {
+				if !errors.Is(err, os.ErrNotExist) {
+					log.Printf("[mcp] warning: plugin %s: %v", mcpPath, err)
+				}
 				continue
 			}
 			for name, srv := range pluginServers {
@@ -264,6 +267,12 @@ func loadPluginMCPFile(path string) (map[string]MCPServerConfig, error) {
 	var flat map[string]MCPServerConfig
 	if err := json.Unmarshal(data, &flat); err != nil {
 		return nil, fmt.Errorf("cannot parse %s: %w", path, err)
+	}
+	// Filter out entries that aren't valid server configs (e.g., "mcpServers" key parsed as flat)
+	for k, v := range flat {
+		if v.Command == "" && v.URL == "" {
+			delete(flat, k)
+		}
 	}
 	return flat, nil
 }
