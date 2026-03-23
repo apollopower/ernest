@@ -188,9 +188,13 @@ func (r *Runner) consumeEvents(ctx context.Context, events <-chan agent.AgentEve
 	return lastError
 }
 
-// SaveSession saves the current session to disk.
+// SaveSession saves the current session to disk — only if there are messages.
 func (r *Runner) SaveSession() {
-	r.session.SetMessages(r.agent.History())
+	history := r.agent.History()
+	if len(history) == 0 {
+		return // don't save empty sessions
+	}
+	r.session.SetMessages(history)
 	if err := r.session.Save(); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: failed to save session: %v\n", err)
 	}
