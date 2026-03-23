@@ -433,6 +433,7 @@ func (a *Agent) Run(ctx context.Context, userPrompt string) <-chan AgentEvent {
 			systemPrompt += "\n\n---\n\n" + a.claudeCfg.SystemPrompt
 		}
 
+		lastProvider := ""
 		for iteration := 0; iteration < maxToolLoops; iteration++ {
 			a.mu.Lock()
 			history := make([]provider.Message, len(a.history))
@@ -448,8 +449,9 @@ func (a *Agent) Run(ctx context.Context, userPrompt string) <-chan AgentEvent {
 				return
 			}
 
-			if iteration == 0 {
+			if providerName != lastProvider {
 				events <- AgentEvent{Type: "provider_switch", ProviderName: providerName}
+				lastProvider = providerName
 			}
 
 			response, stopReason := a.consumeStream(ctx, streamCh, events)
