@@ -839,23 +839,9 @@ func (m *AppModel) runCompaction() tea.Cmd {
 	}
 }
 
-// checkAutoResume looks for a recent session for the current project
-// and shows a hint to the user if one exists.
-func (m *AppModel) checkAutoResume() {
-	if m.session == nil {
-		return
-	}
-	recent := session.FindRecentSession(m.session.ProjectDir)
-	if recent != nil && recent.ID != m.session.ID {
-		summary := recent.Summary
-		if len(summary) > 60 {
-			summary = summary[:60] + "..."
-		}
-		m.chat.AddSystemMessage(fmt.Sprintf(
-			"Previous session found: %s (%s)\nUse /resume %s to continue it.",
-			summary, recent.UpdatedAt.Format("2006-01-02 15:04"), recent.ID))
-	}
-}
+// checkAutoResume is a no-op — removed in favor of the home screen
+// which shows /resume as a discoverable command.
+func (m *AppModel) checkAutoResume() {}
 
 // handleResume implements the /resume command.
 // With no args: lists recent sessions. With an ID: loads that session.

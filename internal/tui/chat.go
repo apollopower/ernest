@@ -326,8 +326,18 @@ func (m *ChatModel) renderHomeScreen() []string {
 	descStyle := lipgloss.NewStyle().
 		Foreground(muted)
 
-	// Build the box content
-	title := titleStyle.Render("E R N E S T")
+	// ASCII art title
+	asciiTitle := []string{
+		"┌─┐┌─┐┌┐┌┌─┐┌─┐┌┬┐",
+		"├┤ ├┬┘│││├┤ └─┐ │ ",
+		"└─┘┴└─┘└┘└─┘└─┘ ┴ ",
+	}
+
+	var titleLines []string
+	for _, line := range asciiTitle {
+		titleLines = append(titleLines, "     "+titleStyle.Render(line))
+	}
+	title := strings.Join(titleLines, "\n")
 	tagline := taglineStyle.Render("Write code. Cut the rest.")
 
 	commands := []struct{ cmd, desc string }{
@@ -346,7 +356,7 @@ func (m *ChatModel) renderHomeScreen() []string {
 	// Assemble with spacing
 	var content []string
 	content = append(content, "")
-	content = append(content, "     "+title)
+	content = append(content, title)
 	content = append(content, "")
 	content = append(content, "     "+tagline)
 	content = append(content, "")
