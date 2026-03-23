@@ -162,9 +162,9 @@ Use the pinned version from Step 1.0.
 
 #### Step 1.2: MCP Config Loader (`internal/mcp/config.go`)
 
-Load MCP server configurations from:
-1. `.mcp.json` at project root
-2. `~/.claude.json` (parse `mcpServers` key at top level)
+Load MCP server configurations (user first, project overrides on name collision):
+1. `~/.claude.json` (parse `mcpServers` key at top level — user/baseline)
+2. `.mcp.json` at project root (overrides user on name collision)
 
 Implement `${VAR}` and `${VAR:-default}` expansion:
 ```go
@@ -202,7 +202,7 @@ The central coordinator for MCP connections:
 - Each tool's `Name` is prefixed: `mcp__<server>__<originalName>`
 
 **`Close()`**:
-- Close all sessions (sends SIGTERM to stdio servers)
+- Close all sessions and release resources (SDK handles stdio subprocess termination)
 
 **`Status()`**:
 - Return name, status (connected/error/disconnected), tool count for each server
@@ -219,7 +219,17 @@ In `internal/agent/loop.go`, update `executeToolWithConfirmation`:
 
 **Permission system extension:** Add tool name glob matching to `PermissionChecker.Check()`. Currently, glob patterns only apply inside `tool(pattern)` format (matching tool input). Extend to also match tool names: `"mcp__sentry__*"` should match `"mcp__sentry__search_issues"`. Without this, users cannot auto-approve MCP tool groups.
 
-Implementation: in `Check()`, when checking `allowedTools` entries that don't contain `(`, use `matchGlob(entry, toolName)` instead of exact match. Same for `deniedTools`.
+Implementation details:
+- Keep `allowedExact`/`deniedExact` maps for pure exact tool-name entries (no `(` and no glob characters like `*`)
+- Update `addAllowed`/`addDenied`:
+  - Entry with `(` → input-pattern rule (existing behavior)
+  - Entry without `(` and no glob chars → `allowedExact`/`deniedExact` (existing behavior)
+  - Entry without `(` but with glob chars (e.g., `mcp__sentry__*`) → new `allowedNameGlobs`/`deniedNameGlobs` lists
+- Update `Check()`:
+  - First: exact match via `allowedExact`/`deniedExact` (fast path)
+  - Then: iterate `allowedNameGlobs`/`deniedNameGlobs` with `matchGlob(pattern, toolName)`
+  - Then: input-pattern entries with `(` (existing behavior)
+  - Non-parenthesized entries are NOT skipped as "already handled" — they route through either exact or name-glob
 
 #### Step 1.5: Wire into Main and Agent
 
