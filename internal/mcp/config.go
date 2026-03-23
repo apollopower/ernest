@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // MCPServerConfig represents a single MCP server definition.
@@ -45,16 +46,26 @@ type claudeJSONProjectConfig struct {
 // envVarRegex matches ${VAR} and ${VAR:-default} patterns.
 var envVarRegex = regexp.MustCompile(`\$\{([^}:]+?)(?::-(.*?))?\}`)
 
-// LoadMCPConfig reads MCP server configurations from:
-// 1. ~/.claude.json (user scope — baseline)
-// 2. .mcp.json at project root (project scope — overrides user on name collision)
+// LoadMCPConfig reads MCP server configurations from (in priority order):
+// 1. Claude Code plugins (lowest — baseline from ~/.claude/plugins/)
+// 2. ~/.claude.json (user scope — overrides plugins on name collision)
+// 3. .mcp.json at project root (highest — overrides all on name collision)
 func LoadMCPConfig(projectDir string) (*MCPConfig, error) {
 	config := &MCPConfig{
 		Servers: make(map[string]MCPServerConfig),
 	}
 
-	// 1. User scope: ~/.claude.json (top-level + project-scoped)
+	// 1. Claude Code plugins (lowest priority)
 	home, err := os.UserHomeDir()
+	if err == nil {
+		if servers, err := loadClaudePlugins(home); err == nil {
+			for name, srv := range servers {
+				config.Servers[name] = srv
+			}
+		}
+	}
+
+	// 2. User scope: ~/.claude.json (overrides plugins)
 	if err == nil {
 		userPath := filepath.Join(home, ".claude.json")
 		if servers, err := loadClaudeJSON(userPath, projectDir); err == nil {
@@ -66,7 +77,7 @@ func LoadMCPConfig(projectDir string) (*MCPConfig, error) {
 		}
 	}
 
-	// 2. Project scope: .mcp.json (overrides user on name collision)
+	// 3. Project scope: .mcp.json (highest priority)
 	if projectDir != "" {
 		projectPath := filepath.Join(projectDir, ".mcp.json")
 		if servers, err := loadMCPFile(projectPath); err == nil {
@@ -138,6 +149,123 @@ func loadMCPFile(path string) (map[string]MCPServerConfig, error) {
 	}
 
 	return file.MCPServers, nil
+}
+
+// installedPluginsFile is the JSON structure of ~/.claude/plugins/installed_plugins.json.
+type installedPluginsFile struct {
+	Plugins map[string][]pluginInstall `json:"plugins"`
+}
+
+type pluginInstall struct {
+	Scope       string `json:"scope"`
+	InstallPath string `json:"installPath"`
+}
+
+// credentialsFile is the JSON structure of ~/.claude/.credentials.json.
+type credentialsFile struct {
+	MCPOAuth map[string]oauthEntry `json:"mcpOAuth"`
+}
+
+type oauthEntry struct {
+	ServerURL   string `json:"serverUrl"`
+	AccessToken string `json:"accessToken"`
+	ExpiresAt   int64  `json:"expiresAt"` // ms since epoch, 0 = no expiry
+}
+
+// loadClaudePlugins reads Claude Code installed plugins and resolves OAuth tokens.
+// Returns MCP servers from plugins with auth headers injected where tokens exist.
+func loadClaudePlugins(home string) (map[string]MCPServerConfig, error) {
+	pluginsPath := filepath.Join(home, ".claude", "plugins", "installed_plugins.json")
+	data, err := os.ReadFile(pluginsPath)
+	if err != nil {
+		return nil, err
+	}
+
+	var plugins installedPluginsFile
+	if err := json.Unmarshal(data, &plugins); err != nil {
+		return nil, fmt.Errorf("cannot parse %s: %w", pluginsPath, err)
+	}
+
+	// Load OAuth tokens
+	tokens := loadOAuthTokens(home)
+
+	servers := make(map[string]MCPServerConfig)
+	for _, installs := range plugins.Plugins {
+		for _, inst := range installs {
+			mcpPath := filepath.Join(inst.InstallPath, ".mcp.json")
+			pluginServers, err := loadPluginMCPFile(mcpPath)
+			if err != nil {
+				continue
+			}
+			for name, srv := range pluginServers {
+				// Inject OAuth token if available
+				if srv.URL != "" {
+					if token, ok := tokens[srv.URL]; ok {
+						if srv.Headers == nil {
+							srv.Headers = make(map[string]string)
+						}
+						srv.Headers["Authorization"] = "Bearer " + token
+					}
+				}
+				servers[name] = srv
+			}
+		}
+	}
+
+	return servers, nil
+}
+
+// loadOAuthTokens reads Claude Code's OAuth token store and returns a URL → token map.
+// Expired tokens are excluded.
+func loadOAuthTokens(home string) map[string]string {
+	credsPath := filepath.Join(home, ".claude", ".credentials.json")
+	data, err := os.ReadFile(credsPath)
+	if err != nil {
+		return nil
+	}
+
+	var creds credentialsFile
+	if err := json.Unmarshal(data, &creds); err != nil {
+		return nil
+	}
+
+	now := time.Now().UnixMilli()
+	tokens := make(map[string]string)
+	for _, entry := range creds.MCPOAuth {
+		if entry.AccessToken == "" || entry.ServerURL == "" {
+			continue
+		}
+		// expiresAt == 0 means no expiration
+		if entry.ExpiresAt > 0 && entry.ExpiresAt < now {
+			log.Printf("[mcp] skipping expired token for %s", entry.ServerURL)
+			continue
+		}
+		tokens[entry.ServerURL] = entry.AccessToken
+	}
+	return tokens
+}
+
+// loadPluginMCPFile reads a plugin's .mcp.json, handling both formats:
+// - Standard: {"mcpServers": {"name": {...}}}
+// - Flat:     {"name": {"type": "http", "url": "..."}}
+func loadPluginMCPFile(path string) (map[string]MCPServerConfig, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	// Try standard format first
+	var standard mcpConfigFile
+	if err := json.Unmarshal(data, &standard); err == nil && len(standard.MCPServers) > 0 {
+		return standard.MCPServers, nil
+	}
+
+	// Try flat format: {"name": {"type": "http", "url": "..."}}
+	var flat map[string]MCPServerConfig
+	if err := json.Unmarshal(data, &flat); err != nil {
+		return nil, fmt.Errorf("cannot parse %s: %w", path, err)
+	}
+	return flat, nil
 }
 
 // ExpandServerConfig expands ${VAR} and ${VAR:-default} in all string fields.

@@ -18,6 +18,7 @@ func writeFile(t *testing.T, path string, data []byte) {
 
 func TestLoadMCPConfig_ProjectFile(t *testing.T) {
 	dir := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
 	mcpJSON := `{
 		"mcpServers": {
 			"test-server": {
@@ -141,6 +142,7 @@ func TestLoadMCPConfig_ProjectOverridesUser(t *testing.T) {
 
 func TestLoadMCPConfig_RejectsDoubleUnderscore(t *testing.T) {
 	dir := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
 	writeFile(t, filepath.Join(dir, ".mcp.json"), []byte(`{
 		"mcpServers": {
 			"bad__name": {"command": "test"},
@@ -163,6 +165,7 @@ func TestLoadMCPConfig_RejectsDoubleUnderscore(t *testing.T) {
 
 func TestLoadMCPConfig_NoFiles(t *testing.T) {
 	dir := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
 	config, err := LoadMCPConfig(dir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -343,5 +346,166 @@ func TestBuildTransport_NoConfig(t *testing.T) {
 	_, err := buildTransport(cfg)
 	if err == nil {
 		t.Error("expected error for empty config")
+	}
+}
+
+func TestLoadPluginMCPFile_Standard(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".mcp.json"), []byte(`{
+		"mcpServers": {
+			"sentry": {"type": "http", "url": "https://mcp.sentry.dev/mcp"}
+		}
+	}`))
+
+	servers, err := loadPluginMCPFile(filepath.Join(dir, ".mcp.json"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if srv, ok := servers["sentry"]; !ok {
+		t.Error("expected sentry server")
+	} else if srv.URL != "https://mcp.sentry.dev/mcp" {
+		t.Errorf("expected sentry URL, got %q", srv.URL)
+	}
+}
+
+func TestLoadPluginMCPFile_Flat(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".mcp.json"), []byte(`{
+		"linear": {"type": "http", "url": "https://mcp.linear.app/mcp"}
+	}`))
+
+	servers, err := loadPluginMCPFile(filepath.Join(dir, ".mcp.json"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if srv, ok := servers["linear"]; !ok {
+		t.Error("expected linear server")
+	} else if srv.URL != "https://mcp.linear.app/mcp" {
+		t.Errorf("expected linear URL, got %q", srv.URL)
+	}
+}
+
+func TestLoadClaudePlugins(t *testing.T) {
+	home := t.TempDir()
+
+	// Create plugin install path with .mcp.json
+	pluginDir := filepath.Join(home, ".claude", "plugins", "cache", "linear", "1.0.0")
+	if err := os.MkdirAll(pluginDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(pluginDir, ".mcp.json"), []byte(`{
+		"linear": {"type": "http", "url": "https://mcp.linear.app/mcp"}
+	}`))
+
+	// Create installed_plugins.json
+	pluginsDir := filepath.Join(home, ".claude", "plugins")
+	writeFile(t, filepath.Join(pluginsDir, "installed_plugins.json"), []byte(fmt.Sprintf(`{
+		"plugins": {
+			"linear@official": [{"scope": "user", "installPath": %q}]
+		}
+	}`, pluginDir)))
+
+	// Create credentials with OAuth token
+	writeFile(t, filepath.Join(home, ".claude", ".credentials.json"), []byte(`{
+		"mcpOAuth": {
+			"plugin:linear:linear|abc123": {
+				"serverUrl": "https://mcp.linear.app/mcp",
+				"accessToken": "test-token-123",
+				"expiresAt": 0
+			}
+		}
+	}`))
+
+	servers, err := loadClaudePlugins(home)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	srv, ok := servers["linear"]
+	if !ok {
+		t.Fatal("expected linear server from plugin")
+	}
+	if srv.URL != "https://mcp.linear.app/mcp" {
+		t.Errorf("expected linear URL, got %q", srv.URL)
+	}
+	if srv.Headers["Authorization"] != "Bearer test-token-123" {
+		t.Errorf("expected Bearer token injected, got %q", srv.Headers["Authorization"])
+	}
+}
+
+func TestLoadClaudePlugins_ExpiredToken(t *testing.T) {
+	home := t.TempDir()
+
+	pluginDir := filepath.Join(home, ".claude", "plugins", "cache", "sentry", "1.0.0")
+	if err := os.MkdirAll(pluginDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(pluginDir, ".mcp.json"), []byte(`{
+		"mcpServers": {"sentry": {"type": "http", "url": "https://mcp.sentry.dev/mcp"}}
+	}`))
+
+	pluginsDir := filepath.Join(home, ".claude", "plugins")
+	writeFile(t, filepath.Join(pluginsDir, "installed_plugins.json"), []byte(fmt.Sprintf(`{
+		"plugins": {
+			"sentry@official": [{"scope": "user", "installPath": %q}]
+		}
+	}`, pluginDir)))
+
+	// Expired token (expiresAt in the past)
+	writeFile(t, filepath.Join(home, ".claude", ".credentials.json"), []byte(`{
+		"mcpOAuth": {
+			"plugin:sentry:sentry|xyz": {
+				"serverUrl": "https://mcp.sentry.dev/mcp",
+				"accessToken": "expired-token",
+				"expiresAt": 1000
+			}
+		}
+	}`))
+
+	servers, err := loadClaudePlugins(home)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	srv, ok := servers["sentry"]
+	if !ok {
+		t.Fatal("expected sentry server from plugin")
+	}
+	// Token should NOT be injected (expired)
+	if _, hasAuth := srv.Headers["Authorization"]; hasAuth {
+		t.Error("expected expired token to be excluded")
+	}
+}
+
+func TestLoadMCPConfig_PluginsOverriddenByUser(t *testing.T) {
+	home := t.TempDir()
+	dir := t.TempDir()
+	t.Setenv("HOME", home)
+
+	// Plugin provides "server" with command "plugin-cmd"
+	pluginDir := filepath.Join(home, ".claude", "plugins", "cache", "test", "1.0.0")
+	if err := os.MkdirAll(pluginDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(pluginDir, ".mcp.json"), []byte(`{
+		"server": {"command": "plugin-cmd"}
+	}`))
+	pluginsDir := filepath.Join(home, ".claude", "plugins")
+	writeFile(t, filepath.Join(pluginsDir, "installed_plugins.json"), []byte(fmt.Sprintf(`{
+		"plugins": {"test@official": [{"scope": "user", "installPath": %q}]}
+	}`, pluginDir)))
+
+	// User config overrides with different command
+	writeFile(t, filepath.Join(home, ".claude.json"), []byte(`{
+		"mcpServers": {"server": {"command": "user-cmd"}}
+	}`))
+
+	config, err := LoadMCPConfig(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if config.Servers["server"].Command != "user-cmd" {
+		t.Errorf("expected user-cmd to override plugin-cmd, got %q", config.Servers["server"].Command)
 	}
 }
