@@ -32,6 +32,16 @@ type CompactionDoneMsg struct {
 	Err    error
 }
 
+// MCPReconnectDoneMsg signals MCP reconnect completed.
+type MCPReconnectDoneMsg struct {
+	Results []mcpReconnectResult
+}
+
+type mcpReconnectResult struct {
+	Name string
+	Err  error
+}
+
 type AppModel struct {
 	chat           ChatModel
 	input          InputModel
@@ -174,6 +184,27 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				tokens := m.agent.EstimateCurrentTokens()
 				m.statusBar, _ = m.statusBar.Update(StatusUpdateMsg{Tokens: tokens})
 			}
+		}
+		return m, nil
+
+	case MCPReconnectDoneMsg:
+		if m.cancelStream != nil {
+			m.cancelStream()
+			m.cancelStream = nil
+		}
+		succeeded, failed := 0, 0
+		for _, r := range msg.Results {
+			if r.Err != nil {
+				failed++
+				m.chat.AddSystemMessage(fmt.Sprintf("Reconnect %s failed: %v", r.Name, r.Err))
+			} else {
+				succeeded++
+			}
+		}
+		if succeeded > 0 {
+			m.chat.AddSystemMessage(fmt.Sprintf("Reconnected %d server(s).", succeeded))
+		} else if failed == 0 {
+			m.chat.AddSystemMessage("All servers already connected.")
 		}
 		return m, nil
 
@@ -1035,33 +1066,35 @@ func (m AppModel) handleMCP(args string) (tea.Model, tea.Cmd) {
 		if len(parts) > 1 {
 			name = strings.TrimSpace(parts[1])
 		}
+
+		// Collect servers to reconnect
+		var targets []string
 		if name != "" {
-			// Reconnect a specific server
-			if err := mgr.Reconnect(context.Background(), name); err != nil {
-				m.chat.AddSystemMessage(fmt.Sprintf("Reconnect %s failed: %v", name, err))
-			} else {
-				m.chat.AddSystemMessage(fmt.Sprintf("Reconnected %s.", name))
-			}
+			targets = []string{name}
 		} else {
-			// Reconnect all disconnected/errored servers
-			statuses := mgr.Status()
-			reconnected := 0
-			for _, s := range statuses {
+			for _, s := range mgr.Status() {
 				if s.Status != "connected" {
-					if err := mgr.Reconnect(context.Background(), s.Name); err != nil {
-						m.chat.AddSystemMessage(fmt.Sprintf("Reconnect %s failed: %v", s.Name, err))
-					} else {
-						reconnected++
-					}
+					targets = append(targets, s.Name)
 				}
 			}
-			if reconnected > 0 {
-				m.chat.AddSystemMessage(fmt.Sprintf("Reconnected %d server(s).", reconnected))
-			} else {
-				m.chat.AddSystemMessage("All servers already connected.")
-			}
 		}
-		return m, nil
+
+		if len(targets) == 0 {
+			m.chat.AddSystemMessage("All servers already connected.")
+			return m, nil
+		}
+
+		m.chat.AddSystemMessage("Reconnecting...")
+		ctx, cancel := context.WithCancel(context.Background())
+		m.cancelStream = cancel
+		return m, func() tea.Msg {
+			var results []mcpReconnectResult
+			for _, t := range targets {
+				err := mgr.Reconnect(ctx, t)
+				results = append(results, mcpReconnectResult{Name: t, Err: err})
+			}
+			return MCPReconnectDoneMsg{Results: results}
+		}
 
 	default:
 		m.chat.AddSystemMessage("Usage: /mcp [status|reconnect [name]]")
