@@ -93,6 +93,16 @@ func ConfigPath() string {
 func (c *Config) AddProvider(pc ProviderConfig) {
 	for i, p := range c.Providers {
 		if strings.EqualFold(p.Name, pc.Name) {
+			// Preserve existing fields when not explicitly set in the new config
+			if pc.Priority == 0 {
+				pc.Priority = p.Priority
+			}
+			if pc.APIKeyEnv == "" {
+				pc.APIKeyEnv = p.APIKeyEnv
+			}
+			if pc.BaseURL == "" {
+				pc.BaseURL = p.BaseURL
+			}
 			c.Providers[i] = pc
 			return
 		}

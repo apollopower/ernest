@@ -518,6 +518,8 @@ func (m AppModel) handleProviders() (tea.Model, tea.Cmd) {
 		status := "no key"
 		if p.HasAPIKeyWithCredentials(m.creds) {
 			status = "connected"
+		} else if p.BaseURL != "" {
+			status = "configured" // local provider, no key needed
 		}
 		model := p.Model
 		if model == "" {
@@ -618,17 +620,7 @@ func (m AppModel) handleProviderAdd(args string) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// Save credentials
-	if m.creds == nil {
-		m.creds = &config.Credentials{}
-	}
-	m.creds.SetKey(providerName, apiKey)
-	if err := config.SaveCredentials(m.creds); err != nil {
-		m.chat.AddSystemMessage("Error saving credentials: " + err.Error())
-		return m, nil
-	}
-
-	// Save config
+	// Save config first (if this fails, no orphaned credentials)
 	m.cfg.AddProvider(config.ProviderConfig{
 		Name:    providerName,
 		Model:   model,
@@ -636,6 +628,16 @@ func (m AppModel) handleProviderAdd(args string) (tea.Model, tea.Cmd) {
 	})
 	if err := config.SaveConfig(m.cfg); err != nil {
 		m.chat.AddSystemMessage("Error saving config: " + err.Error())
+		return m, nil
+	}
+
+	// Save credentials
+	if m.creds == nil {
+		m.creds = &config.Credentials{}
+	}
+	m.creds.SetKey(providerName, apiKey)
+	if err := config.SaveCredentials(m.creds); err != nil {
+		m.chat.AddSystemMessage("Error saving credentials: " + err.Error())
 		return m, nil
 	}
 

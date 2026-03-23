@@ -105,7 +105,7 @@ func (m PickerModel) View() string {
 		lines = append(lines, style.Render(fmt.Sprintf("%s%d. %s", cursor, i+1, item.Label)))
 	}
 
-	help := helpStyle.Render("j/k: navigate  enter: select  esc: cancel")
+	help := helpStyle.Render("j/k: navigate  1-9: quick select  enter: select  esc: cancel")
 
 	content := title + "\n\n" + strings.Join(lines, "\n") + "\n\n" + help
 	return border.Render(content)

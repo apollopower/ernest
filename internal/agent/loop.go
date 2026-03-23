@@ -126,6 +126,7 @@ func (a *Agent) Compact(ctx context.Context) (before int, after int, err error) 
 	a.mu.Lock()
 	history := make([]provider.Message, len(a.history))
 	copy(history, a.history)
+	router := a.router // snapshot under lock for SetRouter safety
 	a.mu.Unlock()
 
 	before = EstimateTokens(history)
@@ -171,7 +172,7 @@ func (a *Agent) Compact(ctx context.Context) (before int, after int, err error) 
 		},
 	}
 
-	streamCh, _, err := a.router.Stream(ctx, compactionSystemPrompt, summaryMessages, nil)
+	streamCh, _, err := router.Stream(ctx, compactionSystemPrompt, summaryMessages, nil)
 	if err != nil {
 		return before, before, fmt.Errorf("compaction failed: %w", err)
 	}
