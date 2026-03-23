@@ -67,6 +67,7 @@ type AppModel struct {
 	height         int
 	pendingCmd     string // for ":" command accumulation
 	cmdMode        bool   // in ":" command mode
+	activeProvider string // last provider used (for detecting fallback)
 	cancelStream   context.CancelFunc
 	agentCh        <-chan agent.AgentEvent
 }
@@ -372,6 +373,10 @@ func (m AppModel) handleAgentEvent(evt agent.AgentEvent) (tea.Model, tea.Cmd) {
 		return m, waitForAgentEvent(m.agentCh)
 
 	case "provider_switch":
+		if m.activeProvider != "" && evt.ProviderName != m.activeProvider {
+			m.chat.AddSystemMessage(fmt.Sprintf("Provider fallback: %s → %s", m.activeProvider, evt.ProviderName))
+		}
+		m.activeProvider = evt.ProviderName
 		m.statusBar, _ = m.statusBar.Update(StatusUpdateMsg{Provider: evt.ProviderName})
 		return m, waitForAgentEvent(m.agentCh)
 
