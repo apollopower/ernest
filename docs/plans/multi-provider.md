@@ -1,7 +1,7 @@
 # Multi-Provider Support with TUI Configuration
 
 ## Date: 2026-03-22
-## Status: Draft
+## Status: Complete (Phase 3 deferred)
 ## GitHub Issue: #10
 
 ---
@@ -410,34 +410,32 @@ This plan does **NOT** include:
 ## Implementation Checklist
 
 ### Phase 1: Credential Store and OpenAI-Compatible Provider
-- [ ] Create `internal/config/credentials.go` — LoadCredentials, SaveCredentials, GetKey, SetKey, Remove
-- [ ] Update `ProviderConfig` with BaseURL field
-- [ ] Add `ResolveAPIKeyWithCredentials` to provider config
-- [ ] Add `SaveConfig` for writing config.yaml back to disk
-- [ ] Implement `internal/provider/openai_compat.go` — OpenAI Chat Completions streaming
-- [ ] Implement OpenAI message format conversion (messages, tools, tool results)
-- [ ] Update provider factory in main.go to use credentials + create OpenAI-compatible providers
-- [ ] Add first-launch "no providers configured" message
-- [ ] Write credential store tests
-- [ ] Write OpenAI-compatible provider tests (message conversion, SSE parsing)
-- [ ] Verify: end-to-end with SiliconFlow or OpenAI API
+- [x] Create `internal/config/credentials.go` — LoadCredentials, SaveCredentials, GetKey, SetKey, Remove
+- [x] Update `ProviderConfig` with BaseURL field
+- [x] Add `ResolveAPIKeyWithCredentials` to provider config
+- [x] Add `SaveConfig` for writing config.yaml back to disk
+- [x] Implement `internal/provider/openai_compat.go` — OpenAI Chat Completions streaming
+- [x] Implement OpenAI message format conversion (messages, tools, tool results)
+- [x] Update provider factory in main.go to use credentials + create OpenAI-compatible providers
+- [x] Add first-launch "no providers configured" message
+- [x] Write credential store tests
+- [x] Write OpenAI-compatible provider tests (message conversion, SSE parsing)
+- [x] Verify: end-to-end with SiliconFlow or OpenAI API
 
-### Phase 2: Gemini Provider and TUI Management
-- [ ] Implement `internal/provider/gemini.go` — Gemini API streaming
-- [ ] Implement `agent.SetRouter()` for runtime router hot-swap
-- [ ] Implement `/providers` command
-- [ ] Implement `/provider add <type> <key>` command with API key validation
-- [ ] Implement `/provider remove <name>` command
-- [ ] Implement `/model <provider> <model>` command
-- [ ] Add `SaveConfig` for writing config.yaml back to disk
-- [ ] Rebuild router and call agent.SetRouter after provider changes
-- [ ] Write Gemini provider tests
-- [ ] Write provider management tests
-- [ ] Verify: add provider from TUI, switch models, remove provider
+### Phase 2: TUI Provider Management (Gemini deferred)
+- [x] Implement `agent.SetRouter()` for runtime router hot-swap
+- [x] Implement `/providers` command
+- [x] Implement `/provider add <type> <key>` command
+- [x] Implement `/provider remove <name>` command
+- [x] Implement `/model` picker and `/model <provider> <model>` command
+- [x] Add `SaveConfig` for writing config.yaml back to disk
+- [x] Rebuild router and call agent.SetRouter after provider changes
+- [x] Write config management tests
+- [x] Verify: add provider from TUI, switch models, remove provider
 
-### Phase 3: Fallback Priority Management
+### Phase 3: Fallback Priority Management (deferred)
+Priority switching is handled by the `/model` picker (Phase 2). Explicit `/provider order` command deferred — low priority compared to plan mode and MCP support.
 - [ ] Implement `/provider order` command
 - [ ] Add runtime provider switch notification (system message + status bar)
 - [ ] Show cooldown in `/providers` output
-- [ ] Write priority reordering tests
-- [ ] Verify: multi-provider fallback with reordering
+- [ ] Implement Gemini provider
