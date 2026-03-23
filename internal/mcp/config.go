@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 )
@@ -62,6 +63,8 @@ func LoadMCPConfig(projectDir string) (*MCPConfig, error) {
 			for name, srv := range servers {
 				config.Servers[name] = srv
 			}
+		} else if !errors.Is(err, os.ErrNotExist) {
+			log.Printf("[mcp] warning: %v", err)
 		}
 	}
 
@@ -189,8 +192,16 @@ func loadClaudePlugins(home string) (map[string]MCPServerConfig, error) {
 	// Load OAuth tokens
 	tokens := loadOAuthTokens(home)
 
+	// Sort plugin names for deterministic load order
+	pluginNames := make([]string, 0, len(plugins.Plugins))
+	for name := range plugins.Plugins {
+		pluginNames = append(pluginNames, name)
+	}
+	sort.Strings(pluginNames)
+
 	servers := make(map[string]MCPServerConfig)
-	for _, installs := range plugins.Plugins {
+	for _, pn := range pluginNames {
+		installs := plugins.Plugins[pn]
 		for _, inst := range installs {
 			mcpPath := filepath.Join(inst.InstallPath, ".mcp.json")
 			pluginServers, err := loadPluginMCPFile(mcpPath)

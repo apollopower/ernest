@@ -350,12 +350,13 @@ func (m *Manager) Status() []ServerStatus {
 // AddServer connects a new MCP server at runtime.
 // Closes any existing server with the same name before connecting.
 func (m *Manager) AddServer(ctx context.Context, name string, cfg MCPServerConfig) error {
-	// Close existing server if any
+	// Close existing server outside lock to avoid blocking
 	m.mu.Lock()
-	if existing, ok := m.servers[name]; ok && existing.session != nil {
+	existing := m.servers[name]
+	m.mu.Unlock()
+	if existing != nil && existing.session != nil {
 		existing.session.Close()
 	}
-	m.mu.Unlock()
 
 	conn := m.connectServer(ctx, name, cfg)
 	m.mu.Lock()

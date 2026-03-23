@@ -43,6 +43,12 @@ type mcpReconnectResult struct {
 	Err  error
 }
 
+// MCPAddDoneMsg signals /mcp add completed.
+type MCPAddDoneMsg struct {
+	Name string
+	Err  error
+}
+
 type AppModel struct {
 	chat           ChatModel
 	input          InputModel
@@ -210,6 +216,19 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.chat.AddSystemMessage(fmt.Sprintf("Reconnected %d server(s).", succeeded))
 		} else if failed == 0 {
 			m.chat.AddSystemMessage("All servers already connected.")
+		}
+		return m, nil
+
+	case MCPAddDoneMsg:
+		m.reconnecting = false
+		if m.cancelReconnect != nil {
+			m.cancelReconnect()
+			m.cancelReconnect = nil
+		}
+		if msg.Err != nil {
+			m.chat.AddSystemMessage(fmt.Sprintf("Failed to connect %s: %v", msg.Name, msg.Err))
+		} else {
+			m.chat.AddSystemMessage(fmt.Sprintf("Added and connected %s.", msg.Name))
 		}
 		return m, nil
 
@@ -1178,7 +1197,7 @@ func (m AppModel) handleMCPAdd(mgr *mcppkg.Manager, args []string) (tea.Model, t
 	m.cancelReconnect = cancel
 	return m, func() tea.Msg {
 		err := mgr.AddServer(ctx, name, mcppkg.ExpandServerConfig(cfg))
-		return MCPReconnectDoneMsg{Results: []mcpReconnectResult{{Name: name, Err: err}}}
+		return MCPAddDoneMsg{Name: name, Err: err}
 	}
 }
 
@@ -1195,18 +1214,27 @@ func (m AppModel) handleMCPRemove(mgr *mcppkg.Manager, args []string) (tea.Model
 		projectDir = m.session.ProjectDir
 	}
 
-	// Disconnect the server
-	if err := mgr.RemoveServer(name); err != nil {
-		m.chat.AddSystemMessage(fmt.Sprintf("Warning: %v", err))
+	// Try to remove from .mcp.json first (only project-scoped servers)
+	configRemoved := false
+	if err := mcppkg.RemoveServerFromProjectConfig(projectDir, name); err == nil {
+		configRemoved = true
 	}
 
-	// Remove from .mcp.json
-	if err := mcppkg.RemoveServerFromProjectConfig(projectDir, name); err != nil {
-		m.chat.AddSystemMessage("Error updating config: " + err.Error())
+	// Disconnect the server from the runtime
+	if err := mgr.RemoveServer(name); err != nil {
+		if !configRemoved {
+			m.chat.AddSystemMessage(fmt.Sprintf("%s is not a project-scoped server — disconnect only for this session.", name))
+		} else {
+			m.chat.AddSystemMessage(fmt.Sprintf("Removed %s from config (was not connected).", name))
+		}
 		return m, nil
 	}
 
-	m.chat.AddSystemMessage(fmt.Sprintf("Removed %s.", name))
+	if configRemoved {
+		m.chat.AddSystemMessage(fmt.Sprintf("Removed %s.", name))
+	} else {
+		m.chat.AddSystemMessage(fmt.Sprintf("Disconnected %s for this session (configured via user settings or plugin).", name))
+	}
 	return m, nil
 }
 
