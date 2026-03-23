@@ -126,3 +126,28 @@ func TestMessagesToChat_LongToolResult(t *testing.T) {
 		t.Error("expected truncated indicator for long tool result")
 	}
 }
+
+func TestFormatToolName(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"read_file", "read_file"},
+		{"bash", "bash"},
+		{"mcp__sentry__search_issues", "sentry: search_issues"},
+		{"mcp__github__create_pr", "github: create_pr"},
+		{"mcp__db__query_table", "db: query_table"},
+		// Tool names with __ preserved after server name
+		{"mcp__server__my__tool", "server: my__tool"},
+		// Edge cases
+		{"mcp__", "mcp__"},
+		{"mcp__server", "mcp__server"},
+	}
+
+	for _, tt := range tests {
+		got := formatToolName(tt.input)
+		if got != tt.want {
+			t.Errorf("formatToolName(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
