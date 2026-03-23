@@ -274,7 +274,7 @@ func (m *ChatModel) renderMessages() {
 
 	var lines []string
 
-	if len(m.messages) == 0 {
+	if !m.hasUserMessages() {
 		lines = append(lines, m.renderHomeScreen()...)
 	}
 
@@ -387,6 +387,16 @@ func (m *ChatModel) renderHomeScreen() []string {
 	}
 
 	return result
+}
+
+// hasUserMessages returns true if there are any non-system messages.
+func (m *ChatModel) hasUserMessages() bool {
+	for _, msg := range m.messages {
+		if msg.Role != "system" {
+			return true
+		}
+	}
+	return false
 }
 
 // padRight pads a string to the given width with spaces.
