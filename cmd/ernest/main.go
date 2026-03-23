@@ -5,6 +5,7 @@ import (
 	"ernest/internal/agent"
 	"ernest/internal/config"
 	"ernest/internal/headless"
+	mcppkg "ernest/internal/mcp"
 	"ernest/internal/provider"
 	"ernest/internal/session"
 	"ernest/internal/tools"
@@ -135,6 +136,18 @@ func main() {
 		initialMode = agent.ModePlan
 	}
 	a := agent.New(router, registry, claudeCfg, cfg.MaxContextTokens, *autoApprove, initialMode)
+
+	// Load MCP config and connect to servers
+	mcpConfig, err := mcppkg.LoadMCPConfig(cwd)
+	if err != nil {
+		log.Printf("[main] warning: failed to load MCP config: %v", err)
+	}
+	if mcpConfig != nil && len(mcpConfig.Servers) > 0 {
+		mcpManager := mcppkg.NewManager()
+		mcpManager.ConnectAll(context.Background(), mcpConfig)
+		a.SetMCPManager(mcpManager)
+		defer mcpManager.Close()
+	}
 
 	// Session: resume or create new
 	var sess *session.Session

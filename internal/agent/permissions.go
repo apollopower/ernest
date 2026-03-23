@@ -26,13 +26,14 @@ const (
 //   - "bash(git *)" — allows any command starting with "git "
 //   - "read_file", "write_file", etc. — exact tool name match
 type PermissionChecker struct {
-	mu           sync.RWMutex
-	autoApprove  bool     // when true, all tools are allowed (except explicitly denied)
-	allowedTools []string // preserves order and patterns
-	deniedTools  []string
-	// Fast lookup for exact tool name matches (no pattern)
-	allowedExact map[string]bool
-	deniedExact  map[string]bool
+	mu               sync.RWMutex
+	autoApprove      bool     // when true, all tools are allowed (except explicitly denied)
+	allowedTools     []string // input-pattern entries with (
+	deniedTools      []string
+	allowedExact     map[string]bool // exact tool name matches (no glob, no parens)
+	deniedExact      map[string]bool
+	allowedNameGlobs []string // tool name glob patterns (e.g., mcp__sentry__*)
+	deniedNameGlobs  []string
 }
 
 // NewPermissionChecker creates a checker from the Claude config's
@@ -57,25 +58,41 @@ func NewPermissionChecker(claudeCfg *config.ClaudeConfig, autoApprove bool) *Per
 	return pc
 }
 
+// hasGlobChars returns true if the string contains a supported glob wildcard (*).
+func hasGlobChars(s string) bool {
+	return strings.Contains(s, "*")
+}
+
 // addAllowed/addDenied must be called with p.mu held (or during construction).
 func (p *PermissionChecker) addAllowed(entry string) {
-	if !strings.Contains(entry, "(") {
+	if strings.Contains(entry, "(") {
+		// Input-pattern entry: bash(git *)
+		if !isValidPatternEntry(entry) {
+			log.Printf("[permissions] skipping malformed allowed entry: %q", entry)
+			return
+		}
+		p.allowedTools = append(p.allowedTools, entry)
+	} else if hasGlobChars(entry) {
+		// Tool name glob: mcp__sentry__*
+		p.allowedNameGlobs = append(p.allowedNameGlobs, entry)
+	} else {
+		// Exact tool name: read_file, bash
 		p.allowedExact[entry] = true
-	} else if !isValidPatternEntry(entry) {
-		log.Printf("[permissions] skipping malformed allowed entry: %q", entry)
-		return
 	}
-	p.allowedTools = append(p.allowedTools, entry)
 }
 
 func (p *PermissionChecker) addDenied(entry string) {
-	if !strings.Contains(entry, "(") {
+	if strings.Contains(entry, "(") {
+		if !isValidPatternEntry(entry) {
+			log.Printf("[permissions] skipping malformed denied entry: %q", entry)
+			return
+		}
+		p.deniedTools = append(p.deniedTools, entry)
+	} else if hasGlobChars(entry) {
+		p.deniedNameGlobs = append(p.deniedNameGlobs, entry)
+	} else {
 		p.deniedExact[entry] = true
-	} else if !isValidPatternEntry(entry) {
-		log.Printf("[permissions] skipping malformed denied entry: %q", entry)
-		return
 	}
-	p.deniedTools = append(p.deniedTools, entry)
 }
 
 // isValidPatternEntry checks that a "tool(pattern)" entry is well-formed.
@@ -92,13 +109,18 @@ func (p *PermissionChecker) Check(toolName string, toolInput json.RawMessage) Pe
 	defer p.mu.RUnlock()
 
 	// Check denied first (takes precedence, even in auto-approve mode)
+	// 1. Exact name match
 	if p.deniedExact[toolName] {
 		return PermissionDenied
 	}
-	for _, entry := range p.deniedTools {
-		if !strings.Contains(entry, "(") {
-			continue // already handled by deniedExact
+	// 2. Name glob match (e.g., mcp__sentry__*)
+	for _, pattern := range p.deniedNameGlobs {
+		if matchGlob(pattern, toolName) {
+			return PermissionDenied
 		}
+	}
+	// 3. Input-pattern match (e.g., bash(rm *))
+	for _, entry := range p.deniedTools {
 		if matchPermission(entry, toolName, toolInput) {
 			return PermissionDenied
 		}
@@ -110,13 +132,18 @@ func (p *PermissionChecker) Check(toolName string, toolInput json.RawMessage) Pe
 	}
 
 	// Check allowed
+	// 1. Exact name match
 	if p.allowedExact[toolName] {
 		return PermissionAllowed
 	}
-	for _, entry := range p.allowedTools {
-		if !strings.Contains(entry, "(") {
-			continue // already handled by allowedExact
+	// 2. Name glob match
+	for _, pattern := range p.allowedNameGlobs {
+		if matchGlob(pattern, toolName) {
+			return PermissionAllowed
 		}
+	}
+	// 3. Input-pattern match
+	for _, entry := range p.allowedTools {
 		if matchPermission(entry, toolName, toolInput) {
 			return PermissionAllowed
 		}
@@ -131,7 +158,15 @@ func (p *PermissionChecker) Check(toolName string, toolInput json.RawMessage) Pe
 func (p *PermissionChecker) Allow(entry string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	// Check for duplicate
+	// Check for duplicate across all lists
+	if p.allowedExact[entry] {
+		return
+	}
+	for _, e := range p.allowedNameGlobs {
+		if e == entry {
+			return
+		}
+	}
 	for _, e := range p.allowedTools {
 		if e == entry {
 			return
