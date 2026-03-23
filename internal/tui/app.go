@@ -207,6 +207,10 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.streaming = false
 		m.confirming = false
 		m.confirmDialog = nil
+		if m.planSaveFilename != "" {
+			m.chat.AddSystemMessage("Plan save cancelled.")
+			m.planSaveFilename = ""
+		}
 		if m.cancelStream != nil {
 			m.cancelStream()
 			m.cancelStream = nil
@@ -232,6 +236,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.compacting = false
 				m.confirming = false
 				m.confirmDialog = nil
+				m.planSaveFilename = ""
 				return m, nil
 			}
 			return m, tea.Quit
@@ -358,6 +363,10 @@ func (m AppModel) handleAgentEvent(evt agent.AgentEvent) (tea.Model, tea.Cmd) {
 		m.chat.AppendToMessage("\n\n[error: " + errText + "]")
 		m.chat.FinalizeMessage()
 		m.streaming = false
+		if m.planSaveFilename != "" {
+			m.chat.AddSystemMessage("Plan save cancelled due to error.")
+			m.planSaveFilename = ""
+		}
 		if m.cancelStream != nil {
 			m.cancelStream()
 			m.cancelStream = nil
@@ -874,9 +883,31 @@ func (m AppModel) handlePlan(args string) (tea.Model, tea.Cmd) {
 
 // handlePlanSave consolidates and saves the plan to docs/plans/<filename>.md.
 func (m AppModel) handlePlanSave(filename string) (tea.Model, tea.Cmd) {
-	filename = filepath.Base(filename) // sanitize — prevent path traversal
+	// Validate and sanitize filename
+	filename = strings.TrimSpace(filename)
+	if filename == "" {
+		m.chat.AddSystemMessage("Invalid filename.")
+		return m, nil
+	}
+	filename = filepath.Base(filename) // prevent path traversal
+	if filename == "." || filename == ".." {
+		m.chat.AddSystemMessage("Invalid filename.")
+		return m, nil
+	}
+	// Strip .md suffix if user included it (we add it)
+	if strings.HasSuffix(strings.ToLower(filename), ".md") {
+		filename = filename[:len(filename)-3]
+	}
+	if filename == "" {
+		m.chat.AddSystemMessage("Invalid filename.")
+		return m, nil
+	}
 	if m.agent == nil {
 		m.chat.AddSystemMessage("No agent configured.")
+		return m, nil
+	}
+	if m.agent.Mode() != agent.ModePlan {
+		m.chat.AddSystemMessage("Use /plan to enter plan mode first.")
 		return m, nil
 	}
 
@@ -1072,6 +1103,9 @@ func (m AppModel) loadSessionByID(id string) (tea.Model, tea.Cmd) {
 		if restoredMode == agent.ModePlan {
 			m.agent.SetMode(agent.ModePlan)
 			m.statusBar, _ = m.statusBar.Update(StatusUpdateMsg{Mode: "plan"})
+		} else {
+			m.agent.SetMode(agent.ModeBuild)
+			m.statusBar, _ = m.statusBar.Update(StatusUpdateMsg{Mode: "build"})
 		}
 		tokens := m.agent.EstimateCurrentTokens()
 		m.statusBar, _ = m.statusBar.Update(StatusUpdateMsg{Tokens: tokens})

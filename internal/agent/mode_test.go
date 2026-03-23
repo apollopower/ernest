@@ -35,7 +35,7 @@ func TestAgentMode_SetAndGet(t *testing.T) {
 	}
 }
 
-func TestAgentMode_PlanFiltersTtools(t *testing.T) {
+func TestAgentMode_PlanFiltersTools(t *testing.T) {
 	// In plan mode, the model should only see read-only tools
 	mp := &multiTurnProvider{
 		name: "test",
@@ -159,8 +159,8 @@ func TestAgentMode_ReadOnlyToolsSet(t *testing.T) {
 	}
 
 	// Write tools should NOT be in the set
-	writeTtools := []string{"write_file", "str_replace", "bash"}
-	for _, name := range writeTtools {
+	writeTools := []string{"write_file", "str_replace", "bash"}
+	for _, name := range writeTools {
 		if readOnlyTools[name] {
 			t.Errorf("write tool %s should not be in readOnlyTools", name)
 		}

@@ -70,7 +70,8 @@ func (m StatusModel) Update(msg tea.Msg) (StatusModel, tea.Cmd) {
 		if msg.MaxTokens >= 0 {
 			m.maxTokens = msg.MaxTokens
 		}
-		// Mode: explicit set — empty string clears it
+		// Mode: "plan" sets it, "build"/"clear" explicitly clear it.
+		// Empty string is a no-op (doesn't accidentally clear on unrelated updates).
 		if msg.Mode == "plan" {
 			m.mode = "plan"
 		} else if msg.Mode == "build" || msg.Mode == "clear" {
