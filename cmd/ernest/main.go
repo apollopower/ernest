@@ -104,7 +104,7 @@ func main() {
 	}
 
 	// First-launch experience: no providers configured
-	needsSetup := *setupMode || (len(providers) == 0 && !isHeadless)
+	needsSetup := (*setupMode || len(providers) == 0) && !isHeadless
 	if len(providers) == 0 && !isHeadless {
 		log.Println("[main] no providers configured, entering setup")
 	} else if len(providers) == 0 && isHeadless {

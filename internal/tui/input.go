@@ -81,11 +81,11 @@ func (m InputModel) View() string {
 		style = inputFocusedStyle
 	}
 	if m.masked {
-		// Show dots instead of actual text
+		// Show fixed-length dots to avoid leaking key length
 		val := m.textarea.Value()
-		display := strings.Repeat("•", len(val))
-		if display == "" {
-			display = m.textarea.Placeholder
+		display := m.textarea.Placeholder
+		if len(val) > 0 {
+			display = strings.Repeat("•", 8)
 		}
 		return style.Render("┃ " + display)
 	}

@@ -43,11 +43,6 @@ type mcpReconnectResult struct {
 	Err  error
 }
 
-// SetupKeyMsg is sent when the user submits an API key during setup.
-type SetupKeyMsg struct {
-	Key string
-}
-
 // MCPAddDoneMsg signals /mcp add completed.
 type MCPAddDoneMsg struct {
 	Name string
@@ -140,7 +135,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.initialized {
 			m.initialized = true
 			if m.setupMode {
-				m.startSetupFlow()
+				m.initSetupFlow()
 			} else {
 				m.checkAutoResume()
 			}
@@ -351,6 +346,14 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.picker != nil {
 				m.picker = nil
 				m.pickerAction = ""
+				return m, nil
+			}
+			// Cancel masked key input (setup or /provider add)
+			if m.input.IsMasked() {
+				m.input.SetMasked(false, "")
+				m.setupProvider = ""
+				m.setupMode = false
+				m.chat.AddSystemMessage("Setup cancelled.")
 				return m, nil
 			}
 			// During confirmation, Esc is a no-op — don't leak into focus management
@@ -1285,8 +1288,10 @@ func (m AppModel) handleMCPRemove(mgr *mcppkg.Manager, args []string) (tea.Model
 	return m, nil
 }
 
-// startSetupFlow shows the provider picker for first-run setup.
-func (m *AppModel) startSetupFlow() {
+// initSetupFlow shows the provider picker for first-run setup.
+// Uses pointer receiver like checkAutoResume — called once during init,
+// mutations are on the local m in Update() which gets returned.
+func (m *AppModel) initSetupFlow() {
 	items := []PickerItem{
 		{ID: "anthropic", Label: "Anthropic (Claude)"},
 		{ID: "openai", Label: "OpenAI (GPT)"},
@@ -1312,7 +1317,14 @@ func (m AppModel) completeSetup(apiKey string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Add provider to config
+	// Save credentials first (more failure-prone, separate file)
+	m.creds.SetKey(providerName, apiKey)
+	if err := config.SaveCredentials(m.creds); err != nil {
+		m.chat.AddSystemMessage("Error saving credentials: " + err.Error())
+		return m, nil
+	}
+
+	// Then save config
 	pc := config.ProviderConfigForName(providerName)
 	m.cfg.AddProvider(pc)
 	if err := config.SaveConfig(m.cfg); err != nil {
@@ -1320,14 +1332,8 @@ func (m AppModel) completeSetup(apiKey string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Save credentials
-	m.creds.SetKey(providerName, apiKey)
-	if err := config.SaveCredentials(m.creds); err != nil {
-		m.chat.AddSystemMessage("Error saving credentials: " + err.Error())
-		return m, nil
-	}
-
 	m.rebuildRouter()
+	m.chat.noProviders = false
 	m.chat.AddSystemMessage(fmt.Sprintf("Provider %s configured. You're ready to go!", providerName))
 	return m, nil
 }
@@ -1345,6 +1351,7 @@ func (m AppModel) completeSetupOllama() (tea.Model, tea.Cmd) {
 	}
 
 	m.rebuildRouter()
+	m.chat.noProviders = false
 	m.chat.AddSystemMessage("Ollama configured (http://localhost:11434). You're ready to go!")
 	return m, nil
 }
