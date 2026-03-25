@@ -19,6 +19,9 @@ type ChatMessage struct {
 	streaming   bool   // true while message is being streamed
 	rendered    string // cached glamour output
 	renderedLen int    // content length when rendered was computed
+	// Incremental rendering: cache rendered prefix up to a block boundary
+	stableRendered string // glamour output for stable (completed) blocks
+	stableLen      int    // content length covered by stableRendered
 }
 
 // MessagesToChat converts provider Messages (agent history) into ChatMessages
@@ -153,9 +156,9 @@ func (m ChatModel) Update(msg tea.Msg) (ChatModel, tea.Cmd) {
 	return m, cmd
 }
 
-// tickStreamRender returns a command that fires a streamRenderTickMsg after 50ms.
+// tickStreamRender returns a command that fires a streamRenderTickMsg after 30ms (~33fps).
 func (m ChatModel) tickStreamRender() tea.Cmd {
-	return tea.Tick(50*time.Millisecond, func(time.Time) tea.Msg {
+	return tea.Tick(30*time.Millisecond, func(time.Time) tea.Msg {
 		return streamRenderTickMsg{}
 	})
 }
@@ -205,6 +208,8 @@ func (m *ChatModel) FinalizeMessage() {
 	last.streaming = false
 	last.rendered = ""  // invalidate cache for clean final render
 	last.renderedLen = 0
+	last.stableRendered = ""
+	last.stableLen = 0
 	m.renderDirty = false
 	m.renderMessages()
 	m.viewport.GotoBottom()
@@ -460,8 +465,8 @@ func padRight(s string, width int) string {
 }
 
 // renderAssistantContent renders assistant messages through glamour for markdown.
-// Uses cached output when content hasn't changed. Streaming content is sanitized
-// to close unclosed code fences before rendering.
+// During streaming, uses incremental rendering: caches rendered output for completed
+// blocks and only runs glamour on the trailing active block.
 func (m *ChatModel) renderAssistantContent(msg *ChatMessage) string {
 	if msg.Content == "" {
 		dots := strings.Repeat(".", m.dotCount+1)
@@ -472,27 +477,94 @@ func (m *ChatModel) renderAssistantContent(msg *ChatMessage) string {
 		return assistantMsgStyle.Render(msg.Content)
 	}
 
-	// Use cache if content hasn't changed
+	// Use full cache if content hasn't changed
 	if msg.rendered != "" && msg.renderedLen == len(msg.Content) {
 		return msg.rendered
 	}
 
-	content := msg.Content
+	var result string
 	if msg.streaming {
-		content = sanitizePartialMarkdown(content)
+		result = m.renderIncremental(msg)
+	} else {
+		rendered, err := m.renderer.Render(msg.Content)
+		if err != nil {
+			return assistantMsgStyle.Render(msg.Content)
+		}
+		result = strings.TrimSpace(rendered)
 	}
 
-	rendered, err := m.renderer.Render(content)
-	if err != nil {
-		return assistantMsgStyle.Render(msg.Content)
-	}
-	result := strings.TrimSpace(rendered)
-
-	// Cache the result
+	// Cache the full result
 	msg.rendered = result
 	msg.renderedLen = len(msg.Content)
 
 	return result
+}
+
+// renderIncremental renders streaming content by splitting at the last stable
+// block boundary. Completed blocks are cached; only the active tail is rendered.
+func (m *ChatModel) renderIncremental(msg *ChatMessage) string {
+	content := msg.Content
+
+	// Find the last stable block boundary (double newline not inside a code fence)
+	splitAt := findStableBlockBoundary(content)
+
+	// If we have new stable content beyond what's cached, render and cache it
+	if splitAt > msg.stableLen {
+		stableContent := content[:splitAt]
+		rendered, err := m.renderer.Render(stableContent)
+		if err == nil {
+			msg.stableRendered = strings.TrimSpace(rendered)
+			msg.stableLen = splitAt
+		}
+	}
+
+	// Render the active tail (from stable boundary to end)
+	tail := content[msg.stableLen:]
+	if tail == "" {
+		return msg.stableRendered
+	}
+
+	tail = sanitizePartialMarkdown(tail)
+	tailRendered, err := m.renderer.Render(tail)
+	if err != nil {
+		tailRendered = assistantMsgStyle.Render(tail)
+	} else {
+		tailRendered = strings.TrimSpace(tailRendered)
+	}
+
+	if msg.stableRendered == "" {
+		return tailRendered
+	}
+	return msg.stableRendered + "\n" + tailRendered
+}
+
+// findStableBlockBoundary returns the byte offset of the last blank line
+// that is not inside an unclosed code fence. Everything before this point is
+// "stable" — completed markdown blocks whose rendering won't change.
+func findStableBlockBoundary(content string) int {
+	lastBoundary := 0
+	fenceOpen := false
+
+	lines := strings.Split(content, "\n")
+	offset := 0
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+
+		// Track code fence state
+		if strings.HasPrefix(trimmed, "```") {
+			fenceOpen = !fenceOpen
+		}
+
+		// A blank line outside a code fence marks a block boundary
+		if trimmed == "" && !fenceOpen && offset > 0 {
+			lastBoundary = offset
+		}
+
+		offset += len(line) + 1 // +1 for the newline
+	}
+
+	return lastBoundary
 }
 
 // sanitizePartialMarkdown closes unclosed code fences in partial markdown
