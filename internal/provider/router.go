@@ -2,10 +2,17 @@ package provider
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"sync"
 	"time"
+)
+
+const (
+	maxRetries     = 3
+	baseRetryDelay = 1 * time.Second
+	maxRetryAfter  = 30 * time.Second
 )
 
 // Router tries providers in priority order, falling back on failure.
@@ -32,8 +39,9 @@ func NewRouter(providers []Provider, cooldown time.Duration) *Router {
 	}
 }
 
-// Stream tries each provider in priority order, falling back on failure.
-// Returns the event channel, the name of the provider that succeeded, and any error.
+// Stream tries each provider in priority order with retry for transient errors.
+// Retryable errors (429, 5xx) are retried up to 3 times with exponential backoff
+// before falling back to the next provider. Non-retryable errors fall back immediately.
 func (r *Router) Stream(ctx context.Context, systemPrompt string,
 	messages []Message, tools []ToolDef) (<-chan StreamEvent, string, error) {
 
@@ -50,24 +58,56 @@ func (r *Router) Stream(ctx context.Context, systemPrompt string,
 	}
 	r.mu.Unlock()
 
-	// Try candidates without holding the lock (network I/O)
+	// Try candidates with retry for transient errors
 	for _, p := range candidates {
-		ch, err := p.Stream(ctx, systemPrompt, messages, tools)
-		if err != nil {
-			log.Printf("[router] %s failed: %v, trying next", p.Name(), err)
-			r.mu.Lock()
-			r.markUnhealthy(p.Name())
-			r.mu.Unlock()
-			continue
+		var lastErr error
+		for attempt := 0; attempt <= maxRetries; attempt++ {
+			if attempt > 0 {
+				delay := retryDelay(lastErr, attempt)
+				log.Printf("[router] retrying %s in %v (attempt %d/%d)", p.Name(), delay, attempt, maxRetries)
+				select {
+				case <-time.After(delay):
+				case <-ctx.Done():
+					return nil, "", ctx.Err()
+				}
+			}
+
+			ch, err := p.Stream(ctx, systemPrompt, messages, tools)
+			if err == nil {
+				r.mu.Lock()
+				r.markHealthy(p.Name())
+				r.mu.Unlock()
+				return ch, p.Name(), nil
+			}
+
+			lastErr = err
+			if !IsRetryable(err) {
+				break // non-retryable, fall back immediately
+			}
 		}
 
+		log.Printf("[router] %s failed: %v, trying next", p.Name(), lastErr)
 		r.mu.Lock()
-		r.markHealthy(p.Name())
+		r.markUnhealthy(p.Name())
 		r.mu.Unlock()
-		return ch, p.Name(), nil
 	}
 
 	return nil, "", fmt.Errorf("all providers exhausted")
+}
+
+// retryDelay computes the delay before a retry attempt.
+// Uses Retry-After from 429 responses when available, otherwise exponential backoff.
+func retryDelay(err error, attempt int) time.Duration {
+	var apiErr *APIError
+	if errors.As(err, &apiErr) && apiErr.StatusCode == 429 && apiErr.RetryAfter > 0 {
+		if apiErr.RetryAfter > maxRetryAfter {
+			log.Printf("[router] capping Retry-After %v to %v", apiErr.RetryAfter, maxRetryAfter)
+			return maxRetryAfter
+		}
+		return apiErr.RetryAfter
+	}
+	// Exponential backoff: 1s, 2s, 4s
+	return baseRetryDelay * (1 << (attempt - 1))
 }
 
 // markUnhealthy must be called with r.mu held.

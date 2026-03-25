@@ -144,9 +144,10 @@ func main() {
 	}
 	if mcpConfig != nil && len(mcpConfig.Servers) > 0 {
 		mcpManager := mcppkg.NewManager()
-		mcpManager.ConnectAll(context.Background(), mcpConfig)
 		a.SetMCPManager(mcpManager)
 		defer mcpManager.Close()
+		// Connect in background so the TUI starts immediately
+		go mcpManager.ConnectAll(context.Background(), mcpConfig)
 	}
 
 	// Session: resume or create new
