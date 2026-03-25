@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"sync"
@@ -97,7 +98,8 @@ func (r *Router) Stream(ctx context.Context, systemPrompt string,
 // retryDelay computes the delay before a retry attempt.
 // Uses Retry-After from 429 responses when available, otherwise exponential backoff.
 func retryDelay(err error, attempt int) time.Duration {
-	if apiErr, ok := err.(*APIError); ok && apiErr.RetryAfter > 0 {
+	var apiErr *APIError
+	if errors.As(err, &apiErr) && apiErr.StatusCode == 429 && apiErr.RetryAfter > 0 {
 		if apiErr.RetryAfter > maxRetryAfter {
 			log.Printf("[router] capping Retry-After %v to %v", apiErr.RetryAfter, maxRetryAfter)
 			return maxRetryAfter

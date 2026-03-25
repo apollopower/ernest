@@ -348,9 +348,6 @@ func TestIsRetryable(t *testing.T) {
 		{nil, false},
 	}
 	for _, tt := range tests {
-		if tt.err == nil {
-			continue
-		}
 		got := IsRetryable(tt.err)
 		if got != tt.retryable {
 			t.Errorf("IsRetryable(%v) = %v, want %v", tt.err, got, tt.retryable)

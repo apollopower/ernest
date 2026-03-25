@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -82,9 +83,15 @@ func NewAPIError(resp *http.Response, body []byte) *APIError {
 		StatusCode: resp.StatusCode,
 		Body:       string(body),
 	}
+	// Retry-After can be seconds ("120") or HTTP-date ("Wed, 25 Mar 2026 12:30:00 GMT")
 	if ra := resp.Header.Get("Retry-After"); ra != "" {
-		if secs, err := strconv.Atoi(strings.TrimSpace(ra)); err == nil {
+		ra = strings.TrimSpace(ra)
+		if secs, err := strconv.Atoi(ra); err == nil {
 			e.RetryAfter = time.Duration(secs) * time.Second
+		} else if t, err := time.Parse(http.TimeFormat, ra); err == nil {
+			if d := time.Until(t); d > 0 {
+				e.RetryAfter = d
+			}
 		}
 	}
 	return e
@@ -92,8 +99,8 @@ func NewAPIError(resp *http.Response, body []byte) *APIError {
 
 // IsRetryable returns true for errors that may succeed on retry (429, 5xx).
 func IsRetryable(err error) bool {
-	apiErr, ok := err.(*APIError)
-	if !ok {
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
 		return false
 	}
 	return apiErr.StatusCode == 429 || apiErr.StatusCode >= 500
