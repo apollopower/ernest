@@ -60,3 +60,27 @@ func (p ProviderConfig) HasAPIKey() bool {
 func (p ProviderConfig) HasAPIKeyWithCredentials(creds *Credentials) bool {
 	return p.ResolveAPIKeyWithCredentials(creds) != ""
 }
+
+// ProviderConfigForName returns a ProviderConfig with sensible defaults
+// for known provider types (model, base URL, priority).
+func ProviderConfigForName(name string) ProviderConfig {
+	name = strings.ToLower(name)
+	pc := ProviderConfig{Name: name, Priority: 1}
+	switch name {
+	case "anthropic":
+		pc.Model = "claude-opus-4-6"
+	case "openai":
+		pc.Model = "gpt-4.1"
+	case "gemini":
+		pc.Model = "gemini-2.5-pro"
+	case "siliconflow":
+		pc.Model = "deepseek-ai/DeepSeek-R1"
+		pc.BaseURL = "https://api.siliconflow.com/v1"
+	case "ollama":
+		pc.Model = "llama3.1"
+		pc.BaseURL = "http://localhost:11434/v1"
+	default:
+		pc.Model = "default"
+	}
+	return pc
+}

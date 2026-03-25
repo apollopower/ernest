@@ -31,6 +31,7 @@ func main() {
 	autoApprove := flag.Bool("auto-approve", false, "Skip all tool confirmation dialogs (headless only)")
 	planMode := flag.Bool("plan", false, "Start in plan mode (read-only tools only)")
 	resumeID := flag.String("resume", "", "Resume a session by ID")
+	setupMode := flag.Bool("setup", false, "Run interactive provider setup")
 	flag.Parse()
 
 	// Validate flags
@@ -103,9 +104,9 @@ func main() {
 	}
 
 	// First-launch experience: no providers configured
+	needsSetup := *setupMode || (len(providers) == 0 && !isHeadless)
 	if len(providers) == 0 && !isHeadless {
-		// TUI will show the message — provider list is empty but we can still launch
-		log.Println("[main] no providers configured")
+		log.Println("[main] no providers configured, entering setup")
 	} else if len(providers) == 0 && isHeadless {
 		fmt.Fprintf(os.Stderr, "error: no providers configured. Set ANTHROPIC_API_KEY (or another provider key), or edit ~/.config/ernest/credentials.yaml\n")
 		os.Exit(1)
@@ -166,7 +167,7 @@ func main() {
 	if isHeadless {
 		runHeadless(a, sess, *prompt, headless.OutputFormat(*output))
 	} else {
-		runTUI(cfg, claudeCfg, a, sess, creds)
+		runTUI(cfg, claudeCfg, a, sess, creds, needsSetup)
 	}
 }
 
@@ -207,8 +208,8 @@ func runHeadless(a *agent.Agent, sess *session.Session, prompt string, format he
 	}
 }
 
-func runTUI(cfg config.Config, claudeCfg *config.ClaudeConfig, a *agent.Agent, sess *session.Session, creds *config.Credentials) {
-	app := tui.NewAppModel(cfg, claudeCfg, a, sess, creds)
+func runTUI(cfg config.Config, claudeCfg *config.ClaudeConfig, a *agent.Agent, sess *session.Session, creds *config.Credentials, setupMode bool) {
+	app := tui.NewAppModel(cfg, claudeCfg, a, sess, creds, setupMode)
 	p := tea.NewProgram(app, tea.WithAltScreen())
 
 	if _, err := p.Run(); err != nil {

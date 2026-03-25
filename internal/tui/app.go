@@ -43,6 +43,11 @@ type mcpReconnectResult struct {
 	Err  error
 }
 
+// SetupKeyMsg is sent when the user submits an API key during setup.
+type SetupKeyMsg struct {
+	Key string
+}
+
 // MCPAddDoneMsg signals /mcp add completed.
 type MCPAddDoneMsg struct {
 	Name string
@@ -74,15 +79,22 @@ type AppModel struct {
 	pendingCmd     string // for ":" command accumulation
 	cmdMode        bool   // in ":" command mode
 	activeProvider string // last provider used (for detecting fallback)
+	setupMode      bool   // in first-run setup flow
+	setupProvider  string // selected provider type during setup
 	cancelStream   context.CancelFunc
 	agentCh        <-chan agent.AgentEvent
 }
 
-func NewAppModel(cfg config.Config, claudeCfg *config.ClaudeConfig, a *agent.Agent, sess *session.Session, creds *config.Credentials) AppModel {
+func NewAppModel(cfg config.Config, claudeCfg *config.ClaudeConfig, a *agent.Agent, sess *session.Session, creds *config.Credentials, setupMode bool) AppModel {
 	primary := cfg.PrimaryProvider()
 
+	chat := NewChatModel()
+	if setupMode {
+		chat.noProviders = true
+	}
+
 	return AppModel{
-		chat:      NewChatModel(),
+		chat:      chat,
 		input:     NewInputModel(),
 		statusBar: NewStatusModel(primary.Name, primary.Model, cfg.MaxContextTokens),
 		agent:     a,
@@ -90,6 +102,7 @@ func NewAppModel(cfg config.Config, claudeCfg *config.ClaudeConfig, a *agent.Age
 		cfg:       cfg,
 		creds:     creds,
 		focused:   true, // start with input focused
+		setupMode: setupMode,
 	}
 }
 
@@ -126,13 +139,22 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Check for auto-resume on first render
 		if !m.initialized {
 			m.initialized = true
-			m.checkAutoResume()
+			if m.setupMode {
+				m.startSetupFlow()
+			} else {
+				m.checkAutoResume()
+			}
 		}
 		return m, nil
 
 	case SubmitMsg:
 		if m.streaming || m.confirming || m.compacting {
 			return m, nil // ignore input while streaming, confirming, or compacting
+		}
+
+		// Setup mode: masked input is an API key
+		if m.input.IsMasked() && m.setupProvider != "" {
+			return m.completeSetup(msg.Text)
 		}
 
 		// Slash command detection: /command args
@@ -682,9 +704,22 @@ func (m AppModel) handleProvider(args string) (tea.Model, tea.Cmd) {
 // handleProviderAdd handles /provider add <type> <key> [--model X] [--base-url Y]
 func (m AppModel) handleProviderAdd(args string) (tea.Model, tea.Cmd) {
 	parts := strings.Fields(args)
-	if len(parts) < 2 {
-		m.chat.AddSystemMessage("Usage: /provider add <type> <key> [--model <model>] [--base-url <url>]")
+	if len(parts) < 1 {
+		m.chat.AddSystemMessage("Usage: /provider add <type> [<key>] [--model <model>] [--base-url <url>]")
 		return m, nil
+	}
+
+	// If only provider type given (no key), prompt with masked input
+	if len(parts) == 1 {
+		providerName := strings.ToLower(parts[0])
+		if providerName == "ollama" {
+			return m.completeSetupOllama()
+		}
+		m.setupProvider = providerName
+		m.chat.AddSystemMessage(fmt.Sprintf("Enter your %s API key:", providerName))
+		m.input.SetMasked(true, "Paste API key here...")
+		cmd := m.input.Focus()
+		return m, cmd
 	}
 
 	providerName := strings.ToLower(parts[0])
@@ -866,6 +901,18 @@ func (m AppModel) handlePickerResult(result PickerResult) (tea.Model, tea.Cmd) {
 
 	case "resume_session":
 		return m.loadSessionByID(result.ID)
+
+	case "setup_provider":
+		// User picked a provider type during setup — prompt for API key
+		m.setupProvider = result.ID
+		if strings.ToLower(result.ID) == "ollama" {
+			// Ollama needs no key, just add with default base URL
+			return m.completeSetupOllama()
+		}
+		m.chat.AddSystemMessage(fmt.Sprintf("Enter your %s API key:", result.ID))
+		m.input.SetMasked(true, "Paste API key here...")
+		cmd := m.input.Focus()
+		return m, cmd
 	}
 
 	return m, nil
@@ -1235,6 +1282,70 @@ func (m AppModel) handleMCPRemove(mgr *mcppkg.Manager, args []string) (tea.Model
 	} else {
 		m.chat.AddSystemMessage(fmt.Sprintf("Disconnected %s for this session (configured via user settings or plugin).", name))
 	}
+	return m, nil
+}
+
+// startSetupFlow shows the provider picker for first-run setup.
+func (m *AppModel) startSetupFlow() {
+	items := []PickerItem{
+		{ID: "anthropic", Label: "Anthropic (Claude)"},
+		{ID: "openai", Label: "OpenAI (GPT)"},
+		{ID: "siliconflow", Label: "SiliconFlow"},
+		{ID: "gemini", Label: "Google Gemini"},
+		{ID: "ollama", Label: "Ollama (local, no key needed)"},
+	}
+	m.chat.AddSystemMessage("Welcome to Ernest.\n\nNo providers configured. Let's set one up.")
+	p := NewPickerModel("Choose a provider", items, m.width)
+	m.picker = &p
+	m.pickerAction = "setup_provider"
+}
+
+// completeSetup saves the provider key and config after setup key input.
+func (m AppModel) completeSetup(apiKey string) (tea.Model, tea.Cmd) {
+	m.input.SetMasked(false, "")
+	providerName := m.setupProvider
+	m.setupProvider = ""
+	m.setupMode = false
+
+	if apiKey == "" {
+		m.chat.AddSystemMessage("Setup cancelled — no key provided.")
+		return m, nil
+	}
+
+	// Add provider to config
+	pc := config.ProviderConfigForName(providerName)
+	m.cfg.AddProvider(pc)
+	if err := config.SaveConfig(m.cfg); err != nil {
+		m.chat.AddSystemMessage("Error saving config: " + err.Error())
+		return m, nil
+	}
+
+	// Save credentials
+	m.creds.SetKey(providerName, apiKey)
+	if err := config.SaveCredentials(m.creds); err != nil {
+		m.chat.AddSystemMessage("Error saving credentials: " + err.Error())
+		return m, nil
+	}
+
+	m.rebuildRouter()
+	m.chat.AddSystemMessage(fmt.Sprintf("Provider %s configured. You're ready to go!", providerName))
+	return m, nil
+}
+
+// completeSetupOllama adds Ollama with no API key.
+func (m AppModel) completeSetupOllama() (tea.Model, tea.Cmd) {
+	m.setupProvider = ""
+	m.setupMode = false
+
+	pc := config.ProviderConfigForName("ollama")
+	m.cfg.AddProvider(pc)
+	if err := config.SaveConfig(m.cfg); err != nil {
+		m.chat.AddSystemMessage("Error saving config: " + err.Error())
+		return m, nil
+	}
+
+	m.rebuildRouter()
+	m.chat.AddSystemMessage("Ollama configured (http://localhost:11434). You're ready to go!")
 	return m, nil
 }
 

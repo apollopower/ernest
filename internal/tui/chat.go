@@ -86,13 +86,14 @@ func MessagesToChat(msgs []provider.Message) []ChatMessage {
 type dotTickMsg struct{}
 
 type ChatModel struct {
-	viewport viewport.Model
-	messages []ChatMessage
-	renderer *glamour.TermRenderer
-	dotCount int // 0-2, produces 1-3 dots for animated indicator
-	width    int
-	height   int
-	ready    bool
+	viewport    viewport.Model
+	messages    []ChatMessage
+	renderer    *glamour.TermRenderer
+	dotCount    int // 0-2, produces 1-3 dots for animated indicator
+	width       int
+	height      int
+	ready       bool
+	noProviders bool // show setup hints on home screen
 }
 
 func NewChatModel() ChatModel {
@@ -340,11 +341,22 @@ func (m *ChatModel) renderHomeScreen() []string {
 	title := strings.Join(titleLines, "\n")
 	tagline := taglineStyle.Render("Write code. Cut the rest.")
 
-	commands := []struct{ cmd, desc string }{
-		{"/model", "Switch provider"},
-		{"/resume", "Continue a session"},
-		{"/providers", "Show connections"},
-		{"/status", "Session info"},
+	var commands []struct{ cmd, desc string }
+	if m.noProviders {
+		commands = []struct{ cmd, desc string }{
+			{"/provider add", "<type> <key>"},
+			{"", ""},
+			{"Types:", "anthropic, openai"},
+			{"", "siliconflow, gemini"},
+			{"", "ollama (no key)"},
+		}
+	} else {
+		commands = []struct{ cmd, desc string }{
+			{"/model", "Switch provider"},
+			{"/resume", "Continue a session"},
+			{"/providers", "Show connections"},
+			{"/status", "Session info"},
+		}
 	}
 
 	var cmdLines []string

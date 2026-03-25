@@ -100,6 +100,33 @@ func TestResolveAPIKeyWithCredentials_CustomProviderNoEnvVar(t *testing.T) {
 	}
 }
 
+func TestProviderConfigForName(t *testing.T) {
+	tests := []struct {
+		name      string
+		wantModel string
+		wantURL   string
+	}{
+		{"anthropic", "claude-opus-4-6", ""},
+		{"openai", "gpt-4.1", ""},
+		{"siliconflow", "deepseek-ai/DeepSeek-R1", "https://api.siliconflow.com/v1"},
+		{"gemini", "gemini-2.5-pro", ""},
+		{"ollama", "llama3.1", "http://localhost:11434/v1"},
+		{"unknown", "default", ""},
+	}
+	for _, tt := range tests {
+		pc := ProviderConfigForName(tt.name)
+		if pc.Model != tt.wantModel {
+			t.Errorf("ProviderConfigForName(%q).Model = %q, want %q", tt.name, pc.Model, tt.wantModel)
+		}
+		if pc.BaseURL != tt.wantURL {
+			t.Errorf("ProviderConfigForName(%q).BaseURL = %q, want %q", tt.name, pc.BaseURL, tt.wantURL)
+		}
+		if pc.Priority != 1 {
+			t.Errorf("ProviderConfigForName(%q).Priority = %d, want 1", tt.name, pc.Priority)
+		}
+	}
+}
+
 func TestResolveAPIKeyWithCredentials_SiliconFlowEnvVar(t *testing.T) {
 	// SiliconFlow is a known provider — env var should work
 	t.Setenv("SILICONFLOW_API_KEY", "sf-env-key")
