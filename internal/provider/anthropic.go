@@ -64,7 +64,7 @@ func (a *Anthropic) Stream(ctx context.Context, systemPrompt string, messages []
 	if resp.StatusCode != http.StatusOK {
 		defer resp.Body.Close()
 		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return nil, fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(bodyBytes))
+		return nil, NewAPIError(resp, bodyBytes)
 	}
 
 	ch := make(chan StreamEvent, 64)
