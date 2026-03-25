@@ -13,8 +13,10 @@ type SubmitMsg struct {
 }
 
 type InputModel struct {
-	textarea textarea.Model
-	focused  bool
+	textarea    textarea.Model
+	focused     bool
+	masked      bool   // render input as dots (for API key entry)
+	placeholder string // saved placeholder to restore after masked mode
 }
 
 func NewInputModel() InputModel {
@@ -78,6 +80,15 @@ func (m InputModel) View() string {
 	if m.focused {
 		style = inputFocusedStyle
 	}
+	if m.masked {
+		// Show fixed-length dots to avoid leaking key length
+		val := m.textarea.Value()
+		display := m.textarea.Placeholder
+		if len(val) > 0 {
+			display = strings.Repeat("•", 8)
+		}
+		return style.Render("┃ " + display)
+	}
 	return style.Render(m.textarea.View())
 }
 
@@ -89,6 +100,25 @@ func (m *InputModel) Focus() tea.Cmd {
 func (m *InputModel) Blur() {
 	m.focused = false
 	m.textarea.Blur()
+}
+
+// SetMasked enables or disables masked input mode.
+// When masked, the view renders dots instead of the actual text.
+func (m *InputModel) SetMasked(masked bool, placeholder string) {
+	m.masked = masked
+	if masked {
+		m.placeholder = m.textarea.Placeholder
+		m.textarea.Placeholder = placeholder
+		m.textarea.Reset()
+	} else {
+		m.textarea.Placeholder = m.placeholder
+		m.textarea.Reset()
+	}
+}
+
+// IsMasked returns true if the input is in masked mode.
+func (m *InputModel) IsMasked() bool {
+	return m.masked
 }
 
 func (m *InputModel) SetWidth(w int) {
