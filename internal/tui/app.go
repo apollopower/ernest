@@ -271,7 +271,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, waitForAgentEvent(m.agentCh)
 
-	case dotTickMsg:
+	case dotTickMsg, streamRenderTickMsg:
 		var cmd tea.Cmd
 		m.chat, cmd = m.chat.Update(msg)
 		return m, cmd
