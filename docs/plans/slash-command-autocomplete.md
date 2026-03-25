@@ -19,7 +19,7 @@ Show a filtered autocomplete popup when the user types `/` in the input area. Th
 ### Behavior:
 - **Trigger:** Input text starts with `/` and the input is focused
 - **Filter:** Matches commands where the name starts with the typed prefix (e.g., `/pro` shows `/providers`, `/provider`)
-- **Navigation:** Up/Down arrows to move cursor, Enter to complete the selected command, Esc or Backspace past `/` to dismiss
+- **Navigation:** Up/Down arrows to move cursor, Tab to complete the selected command, Enter submits as usual, Esc or Backspace past `/` to dismiss
 - **Dismiss:** When input no longer starts with `/`, or when the user selects a command, or on Esc
 - **Rendering:** Compact list rendered between chat and input, showing command name + short description
 - **Non-blocking:** User can keep typing and submit normally — the autocomplete is a suggestion, not a gate
@@ -153,7 +153,7 @@ Command registry → AutocompleteModel → AppModel wiring → View rendering �
 This plan does **NOT** include:
 - Autocomplete for command arguments (e.g., provider names after `/provider add`)
 - Fuzzy matching (prefix match only)
-- Tab completion
+- Tab completion for command arguments
 - Custom user commands
 
 ---

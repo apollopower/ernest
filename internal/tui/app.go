@@ -362,6 +362,10 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.confirming {
 				return m, nil
 			}
+			if m.autocomplete.visible {
+				m.autocomplete.Dismiss()
+				return m, nil
+			}
 			if m.cmdMode {
 				m.cmdMode = false
 				m.pendingCmd = ""
@@ -370,6 +374,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.focused {
 				m.focused = false
 				m.input.Blur()
+				m.autocomplete.Dismiss()
 				return m, nil
 			}
 			return m, nil
@@ -415,9 +420,6 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.autocomplete.Dismiss()
 						return m, nil
 					}
-				case tea.KeyEsc:
-					m.autocomplete.Dismiss()
-					return m, nil
 				}
 			}
 
@@ -1594,9 +1596,9 @@ func (m AppModel) View() string {
 	inputView := m.input.View()
 	statusView := m.statusBar.View()
 
-	// Autocomplete popup between chat and input
+	// Autocomplete popup between chat and input (only when input is focused)
 	acView := ""
-	if m.autocomplete.visible {
+	if m.focused && m.autocomplete.visible {
 		m.autocomplete.width = m.width
 		acView = m.autocomplete.View()
 	}

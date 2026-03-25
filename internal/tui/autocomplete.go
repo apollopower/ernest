@@ -19,7 +19,7 @@ type AutocompleteModel struct {
 // Update refreshes the autocomplete state based on current input text.
 // Returns true if the autocomplete is visible after the update.
 func (a *AutocompleteModel) Update(input string) bool {
-	input = strings.TrimSpace(input)
+	input = strings.TrimLeft(input, " \t")
 	if !strings.HasPrefix(input, "/") || strings.Contains(input, " ") {
 		a.visible = false
 		a.items = nil
