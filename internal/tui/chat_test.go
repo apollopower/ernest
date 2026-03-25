@@ -151,3 +151,53 @@ func TestFormatToolName(t *testing.T) {
 		}
 	}
 }
+
+func TestFindStableBlockBoundary(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    int
+	}{
+		{"empty", "", 0},
+		{"no boundary", "hello world", 0},
+		{"single paragraph", "hello\nworld", 0},
+		{"two paragraphs", "hello\n\nworld", len("hello\n")},
+		{"three paragraphs", "one\n\ntwo\n\nthree", len("one\n\ntwo\n")},
+		{"code fence spans boundary", "```\ncode\n\nmore\n```\n\nafter", len("```\ncode\n\nmore\n```\n")},
+		{"unclosed fence hides boundary", "```\ncode\n\nmore", 0},
+	}
+	for _, tt := range tests {
+		got := findStableBlockBoundary(tt.content)
+		if got != tt.want {
+			t.Errorf("findStableBlockBoundary(%q) [%s] = %d, want %d", tt.content, tt.name, got, tt.want)
+		}
+	}
+}
+
+func TestSanitizePartialMarkdown(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		// No fences — unchanged
+		{"hello world", "hello world"},
+		// Closed fence — unchanged
+		{"```go\nfmt.Println()\n```", "```go\nfmt.Println()\n```"},
+		// Unclosed fence — gets closed
+		{"```go\nfmt.Println()", "```go\nfmt.Println()\n```"},
+		// Multiple fences on separate lines — unchanged when all closed
+		{"```\na\n```\n```\nb\n```", "```\na\n```\n```\nb\n```"},
+		// Second fence unclosed
+		{"```\na\n```\n```\nb", "```\na\n```\n```\nb\n```"},
+		// No content — unchanged
+		{"", ""},
+		// Plain backticks (not triple) — unchanged
+		{"`code`", "`code`"},
+	}
+	for _, tt := range tests {
+		got := sanitizePartialMarkdown(tt.input)
+		if got != tt.want {
+			t.Errorf("sanitizePartialMarkdown(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
