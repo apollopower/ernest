@@ -13,10 +13,12 @@ import (
 )
 
 type ChatMessage struct {
-	Role      string // "user", "assistant", "tool_call", "tool_result"
-	Content   string
-	ToolName  string // for tool_call and tool_result messages
-	streaming bool   // true while message is being streamed
+	Role        string // "user", "assistant", "tool_call", "tool_result"
+	Content     string
+	ToolName    string // for tool_call and tool_result messages
+	streaming   bool   // true while message is being streamed
+	rendered    string // cached glamour output
+	renderedLen int    // content length when rendered was computed
 }
 
 // MessagesToChat converts provider Messages (agent history) into ChatMessages
@@ -82,6 +84,9 @@ func MessagesToChat(msgs []provider.Message) []ChatMessage {
 	return result
 }
 
+// streamRenderTickMsg fires periodically to batch-render streaming content.
+type streamRenderTickMsg struct{}
+
 // dotTickMsg drives the animated "..." indicator while waiting for a response.
 type dotTickMsg struct{}
 
@@ -89,11 +94,12 @@ type ChatModel struct {
 	viewport    viewport.Model
 	messages    []ChatMessage
 	renderer    *glamour.TermRenderer
-	dotCount    int // 0-2, produces 1-3 dots for animated indicator
+	dotCount    int  // 0-2, produces 1-3 dots for animated indicator
 	width       int
 	height      int
 	ready       bool
 	noProviders bool // show setup hints on home screen
+	renderDirty bool // content changed, needs re-render on next tick
 }
 
 func NewChatModel() ChatModel {
@@ -129,11 +135,28 @@ func (m ChatModel) Update(msg tea.Msg) (ChatModel, tea.Cmd) {
 			return m, m.tickDots()
 		}
 		return m, nil
+	case streamRenderTickMsg:
+		if m.renderDirty {
+			m.renderDirty = false
+			m.renderMessages()
+			m.viewport.GotoBottom()
+			if m.isStreaming() {
+				return m, m.tickStreamRender()
+			}
+		}
+		return m, nil
 	default:
 		m.viewport, cmd = m.viewport.Update(msg)
 	}
 
 	return m, cmd
+}
+
+// tickStreamRender returns a command that fires a streamRenderTickMsg after 50ms.
+func (m ChatModel) tickStreamRender() tea.Cmd {
+	return tea.Tick(50*time.Millisecond, func(time.Time) tea.Msg {
+		return streamRenderTickMsg{}
+	})
 }
 
 // tickDots returns a command that sends a dotTickMsg after a short delay.
@@ -150,33 +173,38 @@ func (m *ChatModel) AddMessage(role, content string) {
 }
 
 // StartStreamingMessage adds an empty assistant message and marks it as streaming.
-// Returns a tea.Cmd that starts the dot animation.
+// Returns tea.Cmds for dot animation and debounced markdown rendering.
 func (m *ChatModel) StartStreamingMessage() tea.Cmd {
 	m.dotCount = 0
+	m.renderDirty = false
 	m.messages = append(m.messages, ChatMessage{Role: "assistant", streaming: true})
 	m.renderMessages()
 	m.viewport.GotoBottom()
-	return m.tickDots()
+	return tea.Batch(m.tickDots(), m.tickStreamRender())
 }
 
 // AppendToMessage appends text to the last message (used during streaming).
+// Does not render immediately — sets dirty flag for debounced rendering.
 func (m *ChatModel) AppendToMessage(text string) {
 	if len(m.messages) == 0 {
 		return
 	}
 	last := &m.messages[len(m.messages)-1]
 	last.Content += text
-	m.renderMessages()
-	m.viewport.GotoBottom()
+	m.renderDirty = true
 }
 
 // FinalizeMessage marks the last message as no longer streaming and re-renders
-// with markdown.
+// with markdown. Invalidates cache to get a clean final render without sanitization.
 func (m *ChatModel) FinalizeMessage() {
 	if len(m.messages) == 0 {
 		return
 	}
-	m.messages[len(m.messages)-1].streaming = false
+	last := &m.messages[len(m.messages)-1]
+	last.streaming = false
+	last.rendered = ""  // invalidate cache for clean final render
+	last.renderedLen = 0
+	m.renderDirty = false
 	m.renderMessages()
 	m.viewport.GotoBottom()
 }
@@ -279,7 +307,8 @@ func (m *ChatModel) renderMessages() {
 		lines = append(lines, m.renderHomeScreen()...)
 	}
 
-	for i, msg := range m.messages {
+	for i := range m.messages {
+		msg := &m.messages[i]
 		if i > 0 {
 			lines = append(lines, "")
 		}
@@ -429,23 +458,52 @@ func padRight(s string, width int) string {
 	return s + strings.Repeat(" ", width-len(s))
 }
 
-// renderAssistantContent renders assistant messages. Streaming messages are
-// rendered as plain text; finalized messages go through Glamour for markdown.
-func (m *ChatModel) renderAssistantContent(msg ChatMessage) string {
+// renderAssistantContent renders assistant messages through glamour for markdown.
+// Uses cached output when content hasn't changed. Streaming content is sanitized
+// to close unclosed code fences before rendering.
+func (m *ChatModel) renderAssistantContent(msg *ChatMessage) string {
 	if msg.Content == "" {
 		dots := strings.Repeat(".", m.dotCount+1)
 		return assistantMsgStyle.Render(dots)
 	}
 
-	if msg.streaming || m.renderer == nil {
+	if m.renderer == nil {
 		return assistantMsgStyle.Render(msg.Content)
 	}
 
-	rendered, err := m.renderer.Render(msg.Content)
+	// Use cache if content hasn't changed
+	if msg.rendered != "" && msg.renderedLen == len(msg.Content) {
+		return msg.rendered
+	}
+
+	content := msg.Content
+	if msg.streaming {
+		content = sanitizePartialMarkdown(content)
+	}
+
+	rendered, err := m.renderer.Render(content)
 	if err != nil {
 		return assistantMsgStyle.Render(msg.Content)
 	}
-	return strings.TrimSpace(rendered)
+	result := strings.TrimSpace(rendered)
+
+	// Cache the result
+	msg.rendered = result
+	msg.renderedLen = len(msg.Content)
+
+	return result
+}
+
+// sanitizePartialMarkdown closes unclosed code fences in partial markdown
+// so glamour doesn't produce broken output during streaming.
+func sanitizePartialMarkdown(content string) string {
+	// Count triple-backtick fences
+	fenceCount := strings.Count(content, "```")
+	if fenceCount%2 != 0 {
+		// Odd number of fences means one is unclosed — close it
+		content += "\n```"
+	}
+	return content
 }
 
 // isStreaming returns true if the last message is currently streaming.

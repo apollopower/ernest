@@ -151,3 +151,31 @@ func TestFormatToolName(t *testing.T) {
 		}
 	}
 }
+
+func TestSanitizePartialMarkdown(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		// No fences — unchanged
+		{"hello world", "hello world"},
+		// Closed fence — unchanged
+		{"```go\nfmt.Println()\n```", "```go\nfmt.Println()\n```"},
+		// Unclosed fence — gets closed
+		{"```go\nfmt.Println()", "```go\nfmt.Println()\n```"},
+		// Multiple closed fences — unchanged
+		{"```a```\n```b```", "```a```\n```b```"},
+		// Two fences, one unclosed
+		{"```a```\n```b", "```a```\n```b\n```"},
+		// No content — unchanged
+		{"", ""},
+		// Plain backticks (not triple) — unchanged
+		{"`code`", "`code`"},
+	}
+	for _, tt := range tests {
+		got := sanitizePartialMarkdown(tt.input)
+		if got != tt.want {
+			t.Errorf("sanitizePartialMarkdown(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
