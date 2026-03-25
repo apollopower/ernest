@@ -60,7 +60,6 @@ type AppModel struct {
 	confirmDialog  *ToolConfirmModel
 	picker           *PickerModel
 	pickerAction     string // "switch_provider" or "resume_session" — what to do with the result
-	planSaveFilename string // non-empty when /plan save is streaming a consolidation
 	focused        bool   // true = input focused, false = vim nav mode
 	streaming      bool   // true while agent is streaming a response
 	confirming     bool   // true while tool confirmation dialog is visible
@@ -281,10 +280,6 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.streaming = false
 		m.confirming = false
 		m.confirmDialog = nil
-		if m.planSaveFilename != "" {
-			m.chat.AddSystemMessage("Plan save cancelled.")
-			m.planSaveFilename = ""
-		}
 		if m.cancelStream != nil {
 			m.cancelStream()
 			m.cancelStream = nil
@@ -319,7 +314,6 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.compacting = false
 				m.confirming = false
 				m.confirmDialog = nil
-				m.planSaveFilename = ""
 				return m, nil
 			}
 			return m, tea.Quit
@@ -483,10 +477,6 @@ func (m AppModel) handleAgentEvent(evt agent.AgentEvent) (tea.Model, tea.Cmd) {
 		m.chat.AppendToMessage("\n\n[error: " + errText + "]")
 		m.chat.FinalizeMessage()
 		m.streaming = false
-		if m.planSaveFilename != "" {
-			m.chat.AddSystemMessage("Plan save cancelled due to error.")
-			m.planSaveFilename = ""
-		}
 		if m.cancelStream != nil {
 			m.cancelStream()
 			m.cancelStream = nil
@@ -499,13 +489,6 @@ func (m AppModel) handleAgentEvent(evt agent.AgentEvent) (tea.Model, tea.Cmd) {
 		if m.cancelStream != nil {
 			m.cancelStream()
 			m.cancelStream = nil
-		}
-
-		// Handle /plan save — write the consolidated plan to disk
-		if m.planSaveFilename != "" {
-			filename := m.planSaveFilename
-			m.planSaveFilename = ""
-			m.writePlanFile(filename)
 		}
 
 		// Update token estimate in status bar
@@ -1029,7 +1012,8 @@ func (m AppModel) handlePlan(args string) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// handlePlanSave consolidates and saves the plan to docs/plans/<filename>.md.
+// handlePlanSave saves the last assistant message as a plan to docs/plans/<filename>.md.
+// Extracts directly from conversation history — no re-prompting needed.
 func (m AppModel) handlePlanSave(filename string) (tea.Model, tea.Cmd) {
 	// Validate and sanitize filename
 	filename = strings.TrimSpace(filename)
@@ -1054,24 +1038,10 @@ func (m AppModel) handlePlanSave(filename string) (tea.Model, tea.Cmd) {
 		m.chat.AddSystemMessage("No agent configured.")
 		return m, nil
 	}
-	if m.agent.Mode() != agent.ModePlan {
-		m.chat.AddSystemMessage("Use /plan to enter plan mode first.")
-		return m, nil
-	}
 
-	// Send a consolidation prompt to the agent
-	m.chat.AddSystemMessage("Saving plan...")
-	m.streaming = true
-
-	ctx, cancel := context.WithCancel(context.Background())
-	m.cancelStream = cancel
-
-	// The filename is captured for use after streaming completes
-	m.planSaveFilename = filename
-	m.agentCh = m.agent.Run(ctx, "Output the complete plan document in a single markdown message, following the required plan format. Include all sections we discussed.")
-	dotCmd := m.chat.StartStreamingMessage()
-
-	return m, tea.Batch(waitForAgentEvent(m.agentCh), dotCmd)
+	// Extract last assistant message directly from history
+	m.writePlanFile(filename)
+	return m, nil
 }
 
 // writePlanFile extracts the last assistant message and writes it to docs/plans/.
