@@ -74,6 +74,7 @@ type AppModel struct {
 	pendingCmd     string // for ":" command accumulation
 	cmdMode        bool   // in ":" command mode
 	activeProvider string // last provider used (for detecting fallback)
+	autocomplete   AutocompleteModel
 	setupMode      bool   // in first-run setup flow
 	setupProvider  string // selected provider type during setup
 	cancelStream   context.CancelFunc
@@ -143,6 +144,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case SubmitMsg:
+		m.autocomplete.Dismiss()
 		if m.streaming || m.confirming || m.compacting {
 			return m, nil // ignore input while streaming, confirming, or compacting
 		}
@@ -360,6 +362,10 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.confirming {
 				return m, nil
 			}
+			if m.autocomplete.visible {
+				m.autocomplete.Dismiss()
+				return m, nil
+			}
 			if m.cmdMode {
 				m.cmdMode = false
 				m.pendingCmd = ""
@@ -368,6 +374,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.focused {
 				m.focused = false
 				m.input.Blur()
+				m.autocomplete.Dismiss()
 				return m, nil
 			}
 			return m, nil
@@ -396,10 +403,30 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.handleCmdMode(msg)
 		}
 
-		// Input-focused mode: pass keys to input
+		// Input-focused mode: autocomplete + input
 		if m.focused {
+			// Autocomplete navigation intercepts keys before input
+			if m.autocomplete.visible {
+				switch msg.Type {
+				case tea.KeyUp:
+					m.autocomplete.MoveUp()
+					return m, nil
+				case tea.KeyDown:
+					m.autocomplete.MoveDown()
+					return m, nil
+				case tea.KeyTab:
+					if sel := m.autocomplete.Selected(); sel != "" {
+						m.input.SetValue("/" + sel + " ")
+						m.autocomplete.Dismiss()
+						return m, nil
+					}
+				}
+			}
+
+			// Pass to input, then update autocomplete from new value
 			var cmd tea.Cmd
 			m.input, cmd = m.input.Update(msg)
+			m.autocomplete.Update(m.input.Value())
 			return m, cmd
 		}
 
@@ -1356,17 +1383,40 @@ func (m AppModel) completeSetupOllama() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// knownCommands is the set of recognized slash/colon commands.
-var knownCommands = map[string]bool{
-	"q": true, "quit": true,
-	"status": true, "save": true, "clear": true,
-	"compact": true, "resume": true,
-	"providers": true, "provider": true, "model": true,
-	"plan": true, "build": true, "mcp": true,
+// CommandDef defines a slash command with a description for autocomplete.
+type CommandDef struct {
+	Name string
+	Desc string
 }
 
+// commands is the list of recognized slash commands with descriptions.
+var commands = []CommandDef{
+	{"quit", "Exit Ernest"},
+	{"q", "Exit Ernest"},
+	{"status", "Session info"},
+	{"save", "Save session"},
+	{"clear", "Clear conversation"},
+	{"compact", "Compact context"},
+	{"resume", "Continue a session"},
+	{"providers", "Show connections"},
+	{"provider", "Add/remove provider"},
+	{"model", "Switch provider/model"},
+	{"plan", "Enter plan mode"},
+	{"build", "Enter build mode"},
+	{"mcp", "MCP server status"},
+}
+
+// knownCommandSet is built from commands for O(1) lookup.
+var knownCommandSet = func() map[string]bool {
+	m := make(map[string]bool, len(commands))
+	for _, c := range commands {
+		m[c.Name] = true
+	}
+	return m
+}()
+
 func isKnownCommand(name string) bool {
-	return knownCommands[name]
+	return knownCommandSet[name]
 }
 
 // isValidSessionID checks that the ID is 8 hex characters (no path traversal).
@@ -1546,6 +1596,19 @@ func (m AppModel) View() string {
 	inputView := m.input.View()
 	statusView := m.statusBar.View()
 
+	// Autocomplete popup between chat and input (only when input is focused)
+	acView := ""
+	if m.focused && m.autocomplete.visible {
+		m.autocomplete.width = m.width
+		acView = m.autocomplete.View()
+	}
+
+	if acView != "" {
+		if help != "" {
+			return chatView + "\n" + acView + "\n" + inputView + "\n" + help + "\n" + statusView
+		}
+		return chatView + "\n" + acView + "\n" + inputView + "\n" + statusView
+	}
 	if help != "" {
 		return chatView + "\n" + inputView + "\n" + help + "\n" + statusView
 	}

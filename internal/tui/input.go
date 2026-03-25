@@ -121,6 +121,17 @@ func (m *InputModel) IsMasked() bool {
 	return m.masked
 }
 
+// Value returns the current input text.
+func (m *InputModel) Value() string {
+	return m.textarea.Value()
+}
+
+// SetValue replaces the current input text.
+func (m *InputModel) SetValue(s string) {
+	m.textarea.SetValue(s)
+	m.textarea.CursorEnd()
+}
+
 func (m *InputModel) SetWidth(w int) {
 	// Account for border and padding (2 border + 2 padding = 4)
 	inner := w - 4
