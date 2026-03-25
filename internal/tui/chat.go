@@ -140,9 +140,10 @@ func (m ChatModel) Update(msg tea.Msg) (ChatModel, tea.Cmd) {
 			m.renderDirty = false
 			m.renderMessages()
 			m.viewport.GotoBottom()
-			if m.isStreaming() {
-				return m, m.tickStreamRender()
-			}
+		}
+		// Keep ticking as long as streaming is active
+		if m.isStreaming() {
+			return m, m.tickStreamRender()
 		}
 		return m, nil
 	default:
