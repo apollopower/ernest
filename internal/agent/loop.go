@@ -461,7 +461,25 @@ func (a *Agent) Run(ctx context.Context, userPrompt string) <-chan AgentEvent {
 			a.mu.Unlock()
 
 			// Stop immediately if context was cancelled (e.g., Ctrl+C)
+			// Add synthetic tool results for any tool_use blocks to keep history valid
 			if ctx.Err() != nil {
+				if calls := extractToolCalls(response); len(calls) > 0 {
+					var results []provider.ContentBlock
+					for _, tc := range calls {
+						results = append(results, provider.ContentBlock{
+							Type:      "tool_result",
+							ToolUseID: tc.ToolUseID,
+							Content:   "error: cancelled by user",
+							IsError:   true,
+						})
+					}
+					a.mu.Lock()
+					a.history = append(a.history, provider.Message{
+						Role:    provider.RoleUser,
+						Content: results,
+					})
+					a.mu.Unlock()
+				}
 				events <- AgentEvent{Type: "done"}
 				return
 			}
@@ -480,7 +498,19 @@ func (a *Agent) Run(ctx context.Context, userPrompt string) <-chan AgentEvent {
 
 			// Execute each tool call (with permission checking and confirmation)
 			resultBlocks := make([]provider.ContentBlock, 0, len(calls))
+			cancelled := false
 			for _, tc := range calls {
+				if cancelled {
+					// Add synthetic result for remaining tools after cancellation
+					resultBlocks = append(resultBlocks, provider.ContentBlock{
+						Type:      "tool_result",
+						ToolUseID: tc.ToolUseID,
+						Content:   "error: cancelled by user",
+						IsError:   true,
+					})
+					continue
+				}
+
 				events <- AgentEvent{
 					Type:      "tool_call",
 					ToolName:  tc.ToolName,
@@ -513,9 +543,9 @@ func (a *Agent) Run(ctx context.Context, userPrompt string) <-chan AgentEvent {
 					ToolUseID:  tc.ToolUseID,
 				}
 
-				// Stop if context was cancelled during tool execution/confirmation
+				// Mark cancelled so remaining tools get synthetic results
 				if ctx.Err() != nil {
-					break
+					cancelled = true
 				}
 			}
 
