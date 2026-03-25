@@ -234,8 +234,14 @@ func (m *ChatModel) FinalizeOrRemoveEmpty() {
 	if last.streaming && last.Content == "" {
 		m.messages = m.messages[:len(m.messages)-1]
 	} else {
-		m.messages[len(m.messages)-1].streaming = false
+		msg := &m.messages[len(m.messages)-1]
+		msg.streaming = false
+		msg.rendered = ""
+		msg.renderedLen = 0
+		msg.stableRendered = ""
+		msg.stableLen = 0
 	}
+	m.renderDirty = false
 	m.renderMessages()
 	m.viewport.GotoBottom()
 }
@@ -297,6 +303,14 @@ func (m *ChatModel) SetSize(width, height int) {
 	)
 	if r != nil {
 		m.renderer = r
+	}
+
+	// Invalidate all render caches — word-wrap width changed
+	for i := range m.messages {
+		m.messages[i].rendered = ""
+		m.messages[i].renderedLen = 0
+		m.messages[i].stableRendered = ""
+		m.messages[i].stableLen = 0
 	}
 
 	m.renderMessages()
@@ -502,6 +516,10 @@ func (m *ChatModel) renderAssistantContent(msg *ChatMessage) string {
 
 // renderIncremental renders streaming content by splitting at the last stable
 // block boundary. Completed blocks are cached; only the active tail is rendered.
+// Note: cross-block constructs (numbered lists, nested blockquotes) may render
+// with visual breaks during streaming since prefix and tail are rendered
+// independently. These are corrected on finalization when the full message
+// is rendered as one document.
 func (m *ChatModel) renderIncremental(msg *ChatMessage) string {
 	content := msg.Content
 
@@ -569,11 +587,15 @@ func findStableBlockBoundary(content string) int {
 
 // sanitizePartialMarkdown closes unclosed code fences in partial markdown
 // so glamour doesn't produce broken output during streaming.
+// Uses line-aware fence detection (same logic as findStableBlockBoundary).
 func sanitizePartialMarkdown(content string) string {
-	// Count triple-backtick fences
-	fenceCount := strings.Count(content, "```")
-	if fenceCount%2 != 0 {
-		// Odd number of fences means one is unclosed — close it
+	fenceOpen := false
+	for _, line := range strings.Split(content, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "```") {
+			fenceOpen = !fenceOpen
+		}
+	}
+	if fenceOpen {
 		content += "\n```"
 	}
 	return content

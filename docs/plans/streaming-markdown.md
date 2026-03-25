@@ -55,7 +55,7 @@ type ChatMessage struct {
 
 ### Debounce mechanism
 
-Use a `time.Ticker` or `tea.Tick` to batch streaming renders. Instead of rendering on every `AppendToMessage`, set a dirty flag and render on the next tick (e.g., every 50ms). This gives 20fps rendering which is smooth enough for reading while keeping CPU usage manageable.
+Use a `time.Ticker` or `tea.Tick` to batch streaming renders. Instead of rendering on every `AppendToMessage`, set a dirty flag and render on the next tick (e.g., every 30ms). This gives 20fps rendering which is smooth enough for reading while keeping CPU usage manageable.
 
 ---
 
@@ -110,7 +110,7 @@ Instead of calling `renderMessages()` on every `AppendToMessage`, accumulate tex
 
 - Add `renderDirty bool` flag to ChatModel
 - `AppendToMessage` sets `renderDirty = true` but does NOT call `renderMessages()`
-- A `streamRenderTickMsg` fires every 50ms; if `renderDirty`, call `renderMessages()` and reset the flag
+- A `streamRenderTickMsg` fires every 30ms; if `renderDirty`, call `renderMessages()` and reset the flag
 - `FinalizeMessage` forces an immediate render (no waiting for tick)
 
 ### Step 4: Cache rendered output for non-streaming messages
@@ -137,7 +137,7 @@ Sanitizer → Glamour during streaming → Debounce → Cache → Tests → PR
 
 | Risk | Likelihood | Impact | Mitigation |
 |------|-----------|--------|------------|
-| Glamour is slow on large content | Medium | Medium | Debounce at 50ms + cache non-streaming messages |
+| Glamour is slow on large content | Medium | Medium | Debounce at 30ms + cache non-streaming messages |
 | Partial markdown produces broken rendering | Medium | Low | Sanitizer closes unclosed fences; glamour handles most other cases |
 | Scroll position jumps on re-render | Medium | Medium | GotoBottom only during streaming; preserve position otherwise |
 | Visual "flash" between streaming and final render | Low | Low | Both use glamour — output should be identical |
@@ -157,7 +157,7 @@ This plan does **NOT** include:
 
 - [x] Add `sanitizePartialMarkdown` function (close unclosed code fences)
 - [x] Enable glamour rendering during streaming with sanitization
-- [x] Add debounce: `renderDirty` flag + 50ms tick for streaming renders
+- [x] Add debounce: `renderDirty` flag + 30ms tick for streaming renders
 - [x] Cache rendered output on ChatMessage to avoid re-rendering history
 - [x] Write tests for sanitizePartialMarkdown
 - [ ] Verify: streaming markdown looks correct, no lag on long responses

@@ -185,10 +185,10 @@ func TestSanitizePartialMarkdown(t *testing.T) {
 		{"```go\nfmt.Println()\n```", "```go\nfmt.Println()\n```"},
 		// Unclosed fence — gets closed
 		{"```go\nfmt.Println()", "```go\nfmt.Println()\n```"},
-		// Multiple closed fences — unchanged
-		{"```a```\n```b```", "```a```\n```b```"},
-		// Two fences, one unclosed
-		{"```a```\n```b", "```a```\n```b\n```"},
+		// Multiple fences on separate lines — unchanged when all closed
+		{"```\na\n```\n```\nb\n```", "```\na\n```\n```\nb\n```"},
+		// Second fence unclosed
+		{"```\na\n```\n```\nb", "```\na\n```\n```\nb\n```"},
 		// No content — unchanged
 		{"", ""},
 		// Plain backticks (not triple) — unchanged
